@@ -6,6 +6,9 @@
 
 #include "lvgl/lvgl.h"
 
+LV_FONT_DECLARE(waferlog_font_14);
+LV_FONT_DECLARE(waferlog_font_16);
+
 #define PORTRAIT_HEADER_HEIGHT 72
 #define PORTRAIT_FOOTER_HEIGHT 56
 #define LANDSCAPE_HEADER_HEIGHT 58
@@ -153,12 +156,12 @@ static void add_action_card(
     lv_obj_t * title_label = lv_label_create(card);
     lv_label_set_text(title_label, title);
     lv_obj_set_pos(title_label, 14, 39);
-    text_style(title_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+    text_style(title_label, &waferlog_font_16, COLOR_INK);
 
     lv_obj_t * detail_label = lv_label_create(card);
     lv_label_set_text(detail_label, detail);
     lv_obj_set_pos(detail_label, width - 64, 48);
-    text_style(detail_label, &lv_font_source_han_sans_sc_14_cjk, COLOR_MUTED);
+    text_style(detail_label, &waferlog_font_14, COLOR_MUTED);
 }
 
 static void add_note_card(
@@ -183,12 +186,12 @@ static void add_note_card(
     lv_obj_t * title_label = lv_label_create(card);
     lv_label_set_text(title_label, title);
     lv_obj_set_pos(title_label, 28, 10);
-    text_style(title_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+    text_style(title_label, &waferlog_font_16, COLOR_INK);
 
     lv_obj_t * summary_label = lv_label_create(card);
     lv_label_set_text(summary_label, summary);
     lv_obj_set_pos(summary_label, 28, 34);
-    text_style(summary_label, &lv_font_source_han_sans_sc_14_cjk, COLOR_MUTED);
+    text_style(summary_label, &waferlog_font_14, COLOR_MUTED);
 }
 
 static void render_portrait_home(void)
@@ -196,23 +199,23 @@ static void render_portrait_home(void)
     lv_obj_t * heading = lv_label_create(content_view);
     lv_label_set_text(heading, "工作台");
     lv_obj_set_pos(heading, 16, 12);
-    text_style(heading, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+    text_style(heading, &waferlog_font_16, COLOR_INK);
 
     lv_obj_t * heading_detail = lv_label_create(content_view);
     lv_label_set_text(heading_detail, "把想法留下，再决定如何处理");
     lv_obj_set_pos(heading_detail, 16, 37);
-    text_style(heading_detail, &lv_font_source_han_sans_sc_14_cjk, COLOR_MUTED);
+    text_style(heading_detail, &waferlog_font_14, COLOR_MUTED);
 
     lv_obj_t * capture_card = make_card(content_view, 12, 66, 296, 88, COLOR_DARK, COLOR_DARK);
     lv_obj_t * capture_title = lv_label_create(capture_card);
     lv_label_set_text(capture_title, "记录一条新内容");
     lv_obj_set_pos(capture_title, 16, 14);
-    text_style(capture_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_WHITE);
+    text_style(capture_title, &waferlog_font_16, COLOR_WHITE);
 
     lv_obj_t * capture_detail = lv_label_create(capture_card);
     lv_label_set_text(capture_detail, "文字、语音、图片都可以先保存");
     lv_obj_set_pos(capture_detail, 16, 42);
-    text_style(capture_detail, &lv_font_source_han_sans_sc_14_cjk, 0xB9E5E2);
+    text_style(capture_detail, &waferlog_font_14, 0xB9E5E2);
 
     lv_obj_t * new_button = lv_button_create(capture_card);
     lv_obj_set_pos(new_button, 214, 27);
@@ -224,12 +227,12 @@ static void render_portrait_home(void)
     lv_obj_t * new_label = lv_label_create(new_button);
     lv_label_set_text(new_label, "新建");
     lv_obj_center(new_label);
-    text_style(new_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_WHITE);
+    text_style(new_label, &waferlog_font_16, COLOR_WHITE);
 
     lv_obj_t * quick_title = lv_label_create(content_view);
     lv_label_set_text(quick_title, "快速入口");
     lv_obj_set_pos(quick_title, 16, 171);
-    text_style(quick_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+    text_style(quick_title, &waferlog_font_16, COLOR_INK);
 
     add_action_card(content_view, 12, 198, 94, "笔记", "文字", LV_SYMBOL_EDIT, COLOR_TEAL_PALE, 1);
     add_action_card(content_view, 113, 198, 94, "录音", "声音", "REC", COLOR_YELLOW_PALE, 2);
@@ -238,7 +241,7 @@ static void render_portrait_home(void)
     lv_obj_t * recent_title = lv_label_create(content_view);
     lv_label_set_text(recent_title, "最近内容");
     lv_obj_set_pos(recent_title, 16, 294);
-    text_style(recent_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+    text_style(recent_title, &waferlog_font_16, COLOR_INK);
 
     add_note_card(content_view, 12, 320, 296, "还没有保存的笔记", "从快速入口开始创建第一条内容", COLOR_TEAL);
 }
@@ -248,20 +251,20 @@ static void render_landscape_home(void)
     lv_obj_t * title = lv_label_create(content_view);
     lv_label_set_text(title, "WaferLog 工作台");
     lv_obj_set_pos(title, 16, 14);
-    text_style(title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+    text_style(title, &waferlog_font_16, COLOR_INK);
 
     lv_obj_t * left = make_card(content_view, 12, 48, 166, 154, COLOR_WHITE, COLOR_BORDER);
     lv_obj_t * left_title = lv_label_create(left);
     lv_label_set_text(left_title, "快速记录");
     lv_obj_set_pos(left_title, 16, 12);
-    text_style(left_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+    text_style(left_title, &waferlog_font_16, COLOR_INK);
     add_action_card(left, 12, 44, 66, "笔记", "", "+", COLOR_TEAL_PALE, 1);
     add_action_card(left, 88, 44, 66, "录音", "", "MIC", COLOR_YELLOW_PALE, 2);
 
     lv_obj_t * right_title = lv_label_create(content_view);
     lv_label_set_text(right_title, "最近更新");
     lv_obj_set_pos(right_title, 198, 14);
-    text_style(right_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+    text_style(right_title, &waferlog_font_16, COLOR_INK);
     add_note_card(content_view, 198, 48, 270, "T5AI 界面想法", "2 个节点 · 待 AI 分析", COLOR_TEAL);
     add_note_card(content_view, 198, 116, 270, "今天的产品灵感", "录音 03:18 · 本地保存", COLOR_BLUE);
 }
@@ -306,12 +309,12 @@ static void render_calendar(void)
         lv_obj_t * message_title = lv_label_create(message);
         lv_label_set_text(message_title, "桌面电子日历");
         lv_obj_set_pos(message_title, 24, 24);
-        text_style(message_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+        text_style(message_title, &waferlog_font_16, COLOR_INK);
 
         lv_obj_t * message_detail = lv_label_create(message);
         lv_label_set_text(message_detail, "横屏启动模拟器查看日历视图");
         lv_obj_set_pos(message_detail, 24, 60);
-        text_style(message_detail, &lv_font_source_han_sans_sc_14_cjk, COLOR_MUTED);
+        text_style(message_detail, &waferlog_font_14, COLOR_MUTED);
 
         lv_obj_t * command = lv_label_create(message);
         lv_label_set_text(command, "waferlog.exe --landscape");
@@ -342,7 +345,7 @@ static void render_calendar(void)
     lv_obj_t * event = lv_label_create(date_card);
     lv_label_set_text(event, "20:00  AI 回顾");
     lv_obj_set_pos(event, 16, 140);
-    text_style(event, &lv_font_source_han_sans_sc_14_cjk, COLOR_WHITE);
+    text_style(event, &waferlog_font_14, COLOR_WHITE);
 
     lv_obj_t * calendar = make_card(content_view, 136, 12, 332, 194, COLOR_WHITE, COLOR_BORDER);
     static const char * weekdays[] = {"MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"};
@@ -413,7 +416,7 @@ void waferlog_ui_create(void)
     lv_obj_t * brand = lv_label_create(header);
     lv_label_set_text(brand, is_landscape ? "硅笺" : "硅笺 · 本地工作区");
     lv_obj_set_pos(brand, 16, is_landscape ? 34 : 40);
-    text_style(brand, &lv_font_source_han_sans_sc_16_cjk, COLOR_TEAL);
+    text_style(brand, &waferlog_font_16, COLOR_TEAL);
 
     if(is_landscape) {
         home_tab = lv_button_create(header);
@@ -425,7 +428,7 @@ void waferlog_ui_create(void)
         lv_obj_t * home_label = lv_label_create(home_tab);
         lv_label_set_text(home_label, "首页");
         lv_obj_center(home_label);
-        text_style(home_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_MUTED);
+        text_style(home_label, &waferlog_font_16, COLOR_MUTED);
 
         calendar_tab = lv_button_create(header);
         lv_obj_set_pos(calendar_tab, screen_width - 78, 10);
@@ -436,7 +439,7 @@ void waferlog_ui_create(void)
         lv_obj_t * calendar_label = lv_label_create(calendar_tab);
         lv_label_set_text(calendar_label, "日历");
         lv_obj_center(calendar_label);
-        text_style(calendar_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_MUTED);
+        text_style(calendar_label, &waferlog_font_16, COLOR_MUTED);
     }
     else {
         lv_obj_t * local_badge = lv_obj_create(header);
@@ -470,7 +473,7 @@ void waferlog_ui_create(void)
         status_label = lv_label_create(footer);
         lv_label_set_text(status_label, "WaferLog · 本地模式");
         lv_obj_set_pos(status_label, 16, 13);
-        text_style(status_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_WHITE);
+        text_style(status_label, &waferlog_font_16, COLOR_WHITE);
 
         lv_obj_t * status_right = lv_label_create(footer);
         lv_label_set_text(status_right, "SYNC OFFLINE");
