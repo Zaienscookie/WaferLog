@@ -2,7 +2,9 @@
 #define _DEFAULT_SOURCE
 #endif
 
+#include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #ifdef _MSC_VER
 #include <Windows.h>
@@ -13,11 +15,15 @@
 #include "lvgl/lvgl.h"
 #include "hal/hal.h"
 #include "waferlog_ui.h"
-// 初始化
-int main(void)
+
+int main(int argc, char ** argv)
 {
+    bool landscape = argc > 1 && strcmp(argv[1], "--landscape") == 0;
+    int32_t width = landscape ? 480 : 320;
+    int32_t height = landscape ? 320 : 480;
+
     lv_init();
-    sdl_hal_init(320, 480);
+    sdl_hal_init(width, height);
     waferlog_ui_create();
 
     while(1) {
