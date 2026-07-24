@@ -6,8 +6,10 @@
 
 #include "lvgl/lvgl.h"
 
-#define HEADER_HEIGHT 58
-#define FOOTER_HEIGHT 44
+#define PORTRAIT_HEADER_HEIGHT 72
+#define PORTRAIT_FOOTER_HEIGHT 56
+#define LANDSCAPE_HEADER_HEIGHT 58
+#define LANDSCAPE_FOOTER_HEIGHT 44
 
 #define COLOR_BACKGROUND 0xE9F8F6
 #define COLOR_WHITE 0xFFFFFF
@@ -50,6 +52,10 @@ static void set_status(const char * message)
 
 static void update_tabs(bool calendar_active)
 {
+    if(home_tab == NULL || calendar_tab == NULL) {
+        return;
+    }
+
     lv_obj_set_style_bg_color(
         home_tab,
         color(calendar_active ? COLOR_WHITE : COLOR_TEAL),
@@ -187,38 +193,54 @@ static void add_note_card(
 
 static void render_portrait_home(void)
 {
-    lv_obj_t * title = lv_label_create(content_view);
-    lv_label_set_text(title, "今天，记录一点什么？");
-    lv_obj_set_pos(title, 16, 14);
-    text_style(title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+    lv_obj_t * heading = lv_label_create(content_view);
+    lv_label_set_text(heading, "工作台");
+    lv_obj_set_pos(heading, 16, 12);
+    text_style(heading, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
 
-    lv_obj_t * subtitle = lv_label_create(content_view);
-    lv_label_set_text(subtitle, "把灵感放进口袋，稍后交给 AI 整理");
-    lv_obj_set_pos(subtitle, 16, 39);
-    text_style(subtitle, &lv_font_montserrat_12, COLOR_MUTED);
+    lv_obj_t * heading_detail = lv_label_create(content_view);
+    lv_label_set_text(heading_detail, "把想法留下，再决定如何处理");
+    lv_obj_set_pos(heading_detail, 16, 37);
+    text_style(heading_detail, &lv_font_montserrat_12, COLOR_MUTED);
 
-    add_action_card(content_view, 10, 70, 94, "笔记", "WRITE", "+", COLOR_TEAL_PALE, 1);
-    add_action_card(content_view, 113, 70, 94, "录音", "VOICE", "MIC", COLOR_YELLOW_PALE, 2);
-    add_action_card(content_view, 216, 70, 94, "图片", "IMAGE", "IMG", COLOR_PINK_PALE, 3);
+    lv_obj_t * capture_card = make_card(content_view, 12, 66, 296, 88, COLOR_DARK, COLOR_DARK);
+    lv_obj_t * capture_title = lv_label_create(capture_card);
+    lv_label_set_text(capture_title, "记录一条新内容");
+    lv_obj_set_pos(capture_title, 16, 14);
+    text_style(capture_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_WHITE);
 
-    lv_obj_t * recent = lv_label_create(content_view);
-    lv_label_set_text(recent, "最近笔记");
-    lv_obj_set_pos(recent, 16, 164);
-    text_style(recent, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+    lv_obj_t * capture_detail = lv_label_create(capture_card);
+    lv_label_set_text(capture_detail, "文字、语音、图片都可以先保存");
+    lv_obj_set_pos(capture_detail, 16, 42);
+    text_style(capture_detail, &lv_font_montserrat_12, 0xB9E5E2);
 
-    add_note_card(content_view, 10, 192, 300, "T5AI 界面想法", "待 AI 总结 · 2 个关联节点", COLOR_TEAL);
-    add_note_card(content_view, 10, 258, 300, "今天的产品灵感", "录音 03:18 · 尚未上传", COLOR_BLUE);
+    lv_obj_t * new_button = lv_button_create(capture_card);
+    lv_obj_set_pos(new_button, 214, 27);
+    lv_obj_set_size(new_button, 66, 34);
+    lv_obj_set_style_radius(new_button, 17, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(new_button, color(COLOR_TEAL), LV_PART_MAIN);
+    lv_obj_set_style_border_width(new_button, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(new_button, action_clicked_cb, LV_EVENT_CLICKED, (void *)1U);
+    lv_obj_t * new_label = lv_label_create(new_button);
+    lv_label_set_text(new_label, "新建");
+    lv_obj_center(new_label);
+    text_style(new_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_WHITE);
 
-    lv_obj_t * ai_card = make_card(content_view, 10, 330, 300, 72, COLOR_DARK, COLOR_DARK);
-    lv_obj_t * ai_title = lv_label_create(ai_card);
-    lv_label_set_text(ai_title, "AI 知识回顾");
-    lv_obj_set_pos(ai_title, 16, 12);
-    text_style(ai_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_WHITE);
+    lv_obj_t * quick_title = lv_label_create(content_view);
+    lv_label_set_text(quick_title, "快速入口");
+    lv_obj_set_pos(quick_title, 16, 171);
+    text_style(quick_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
 
-    lv_obj_t * ai_detail = lv_label_create(ai_card);
-    lv_label_set_text(ai_detail, "上传后生成知识点、RAG 节点和扩展方向");
-    lv_obj_set_pos(ai_detail, 16, 39);
-    text_style(ai_detail, &lv_font_montserrat_12, 0xB9E5E2);
+    add_action_card(content_view, 12, 198, 94, "笔记", "文字", LV_SYMBOL_EDIT, COLOR_TEAL_PALE, 1);
+    add_action_card(content_view, 113, 198, 94, "录音", "声音", LV_SYMBOL_AUDIO, COLOR_YELLOW_PALE, 2);
+    add_action_card(content_view, 214, 198, 94, "导入", "文件", LV_SYMBOL_UPLOAD, COLOR_BLUE_PALE, 3);
+
+    lv_obj_t * recent_title = lv_label_create(content_view);
+    lv_label_set_text(recent_title, "最近内容");
+    lv_obj_set_pos(recent_title, 16, 294);
+    text_style(recent_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
+
+    add_note_card(content_view, 12, 320, 296, "还没有保存的笔记", "从快速入口开始创建第一条内容", COLOR_TEAL);
 }
 
 static void render_landscape_home(void)
@@ -369,72 +391,129 @@ void waferlog_ui_create(void)
     int32_t screen_width = lv_display_get_horizontal_resolution(lv_display_get_default());
     int32_t screen_height = lv_display_get_vertical_resolution(lv_display_get_default());
     is_landscape = screen_width > screen_height;
+    int32_t header_height = is_landscape ? LANDSCAPE_HEADER_HEIGHT : PORTRAIT_HEADER_HEIGHT;
+    int32_t footer_height = is_landscape ? LANDSCAPE_FOOTER_HEIGHT : PORTRAIT_FOOTER_HEIGHT;
+    home_tab = NULL;
+    calendar_tab = NULL;
 
     lv_obj_set_style_bg_color(screen, color(COLOR_BACKGROUND), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
 
     lv_obj_t * header = lv_obj_create(screen);
     lv_obj_remove_style_all(header);
-    lv_obj_set_size(header, screen_width, HEADER_HEIGHT);
+    lv_obj_set_size(header, screen_width, header_height);
     lv_obj_set_style_bg_color(header, color(COLOR_WHITE), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(header, LV_OPA_COVER, LV_PART_MAIN);
 
     lv_obj_t * title = lv_label_create(header);
     lv_label_set_text(title, "WaferLog");
-    lv_obj_set_pos(title, 16, 9);
+    lv_obj_set_pos(title, 16, is_landscape ? 9 : 12);
     text_style(title, &lv_font_montserrat_20, COLOR_INK);
 
     lv_obj_t * brand = lv_label_create(header);
-    lv_label_set_text(brand, "硅笺");
-    lv_obj_set_pos(brand, 16, 34);
+    lv_label_set_text(brand, is_landscape ? "硅笺" : "硅笺 · 本地工作区");
+    lv_obj_set_pos(brand, 16, is_landscape ? 34 : 40);
     text_style(brand, &lv_font_source_han_sans_sc_16_cjk, COLOR_TEAL);
 
-    home_tab = lv_button_create(header);
-    lv_obj_set_pos(home_tab, screen_width - 146, 10);
-    lv_obj_set_size(home_tab, 60, 34);
-    lv_obj_set_style_radius(home_tab, 17, LV_PART_MAIN);
-    lv_obj_set_style_border_width(home_tab, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(home_tab, tab_clicked_cb, LV_EVENT_CLICKED, (void *)1U);
-    lv_obj_t * home_label = lv_label_create(home_tab);
-    lv_label_set_text(home_label, "口袋本");
-    lv_obj_center(home_label);
-    text_style(home_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_MUTED);
+    if(is_landscape) {
+        home_tab = lv_button_create(header);
+        lv_obj_set_pos(home_tab, screen_width - 146, 10);
+        lv_obj_set_size(home_tab, 60, 34);
+        lv_obj_set_style_radius(home_tab, 17, LV_PART_MAIN);
+        lv_obj_set_style_border_width(home_tab, 0, LV_PART_MAIN);
+        lv_obj_add_event_cb(home_tab, tab_clicked_cb, LV_EVENT_CLICKED, (void *)1U);
+        lv_obj_t * home_label = lv_label_create(home_tab);
+        lv_label_set_text(home_label, "首页");
+        lv_obj_center(home_label);
+        text_style(home_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_MUTED);
 
-    calendar_tab = lv_button_create(header);
-    lv_obj_set_pos(calendar_tab, screen_width - 78, 10);
-    lv_obj_set_size(calendar_tab, 62, 34);
-    lv_obj_set_style_radius(calendar_tab, 17, LV_PART_MAIN);
-    lv_obj_set_style_border_width(calendar_tab, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(calendar_tab, tab_clicked_cb, LV_EVENT_CLICKED, (void *)2U);
-    lv_obj_t * calendar_label = lv_label_create(calendar_tab);
-    lv_label_set_text(calendar_label, "日历");
-    lv_obj_center(calendar_label);
-    text_style(calendar_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_MUTED);
+        calendar_tab = lv_button_create(header);
+        lv_obj_set_pos(calendar_tab, screen_width - 78, 10);
+        lv_obj_set_size(calendar_tab, 62, 34);
+        lv_obj_set_style_radius(calendar_tab, 17, LV_PART_MAIN);
+        lv_obj_set_style_border_width(calendar_tab, 0, LV_PART_MAIN);
+        lv_obj_add_event_cb(calendar_tab, tab_clicked_cb, LV_EVENT_CLICKED, (void *)2U);
+        lv_obj_t * calendar_label = lv_label_create(calendar_tab);
+        lv_label_set_text(calendar_label, "日历");
+        lv_obj_center(calendar_label);
+        text_style(calendar_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_MUTED);
+    }
+    else {
+        lv_obj_t * local_badge = lv_obj_create(header);
+        lv_obj_remove_style_all(local_badge);
+        lv_obj_set_pos(local_badge, screen_width - 72, 20);
+        lv_obj_set_size(local_badge, 56, 30);
+        lv_obj_set_style_radius(local_badge, 15, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(local_badge, color(COLOR_TEAL_PALE), LV_PART_MAIN);
+        lv_obj_t * local_label = lv_label_create(local_badge);
+        lv_label_set_text(local_label, "LOCAL");
+        lv_obj_center(local_label);
+        text_style(local_label, &lv_font_montserrat_12, COLOR_TEAL);
+    }
 
     content_view = lv_obj_create(screen);
     lv_obj_remove_style_all(content_view);
-    lv_obj_set_pos(content_view, 0, HEADER_HEIGHT);
-    lv_obj_set_size(content_view, screen_width, screen_height - HEADER_HEIGHT - FOOTER_HEIGHT);
+    lv_obj_set_pos(content_view, 0, header_height);
+    lv_obj_set_size(content_view, screen_width, screen_height - header_height - footer_height);
     lv_obj_set_style_bg_color(content_view, color(COLOR_BACKGROUND), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(content_view, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_scrollbar_mode(content_view, LV_SCROLLBAR_MODE_OFF);
 
     lv_obj_t * footer = lv_obj_create(screen);
     lv_obj_remove_style_all(footer);
-    lv_obj_set_pos(footer, 0, screen_height - FOOTER_HEIGHT);
-    lv_obj_set_size(footer, screen_width, FOOTER_HEIGHT);
-    lv_obj_set_style_bg_color(footer, color(COLOR_DARK), LV_PART_MAIN);
+    lv_obj_set_pos(footer, 0, screen_height - footer_height);
+    lv_obj_set_size(footer, screen_width, footer_height);
+    lv_obj_set_style_bg_color(footer, color(is_landscape ? COLOR_DARK : COLOR_BACKGROUND), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, LV_PART_MAIN);
 
-    status_label = lv_label_create(footer);
-    lv_label_set_text(status_label, "口袋本 · 本地模式");
-    lv_obj_set_pos(status_label, 16, 13);
-    text_style(status_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_WHITE);
+    if(is_landscape) {
+        status_label = lv_label_create(footer);
+        lv_label_set_text(status_label, "WaferLog · 本地模式");
+        lv_obj_set_pos(status_label, 16, 13);
+        text_style(status_label, &lv_font_source_han_sans_sc_16_cjk, COLOR_WHITE);
 
-    lv_obj_t * status_right = lv_label_create(footer);
-    lv_label_set_text(status_right, "SYNC OFFLINE");
-    lv_obj_set_pos(status_right, screen_width - 106, 16);
-    text_style(status_right, &lv_font_montserrat_12, 0xB9E5E2);
+        lv_obj_t * status_right = lv_label_create(footer);
+        lv_label_set_text(status_right, "SYNC OFFLINE");
+        lv_obj_set_pos(status_right, screen_width - 106, 16);
+        text_style(status_right, &lv_font_montserrat_12, 0xB9E5E2);
+    }
+    else {
+        status_label = lv_label_create(footer);
+        lv_obj_add_flag(status_label, LV_OBJ_FLAG_HIDDEN);
+
+        lv_obj_t * navigation = lv_obj_create(footer);
+        lv_obj_remove_style_all(navigation);
+        lv_obj_set_pos(navigation, 12, 4);
+        lv_obj_set_size(navigation, screen_width - 24, 48);
+        lv_obj_set_style_radius(navigation, 18, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(navigation, color(COLOR_DARK), LV_PART_MAIN);
+
+        static const char * navigation_icons[] = {
+            LV_SYMBOL_HOME,
+            LV_SYMBOL_EDIT,
+            LV_SYMBOL_AUDIO,
+            LV_SYMBOL_LIST,
+            LV_SYMBOL_SETTINGS
+        };
+
+        for(uint32_t i = 0; i < 5; i++) {
+            lv_obj_t * item = lv_button_create(navigation);
+            lv_obj_set_pos(item, 13 + (int32_t)i * 55, 6);
+            lv_obj_set_size(item, 40, 36);
+            lv_obj_set_style_radius(item, 18, LV_PART_MAIN);
+            lv_obj_set_style_border_width(item, 0, LV_PART_MAIN);
+            lv_obj_set_style_bg_color(
+                item,
+                color(i == 0 ? COLOR_WHITE : COLOR_DARK),
+                LV_PART_MAIN
+            );
+
+            lv_obj_t * icon = lv_label_create(item);
+            lv_label_set_text(icon, navigation_icons[i]);
+            lv_obj_center(icon);
+            text_style(icon, &lv_font_montserrat_16, i == 0 ? COLOR_DARK : 0xA9C7C5);
+        }
+    }
 
     render_home();
 }
