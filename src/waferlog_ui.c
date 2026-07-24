@@ -494,14 +494,13 @@ void waferlog_ui_create(void)
         static const char * navigation_icons[] = {
             LV_SYMBOL_HOME,
             LV_SYMBOL_EDIT,
-            LV_SYMBOL_UPLOAD,
             LV_SYMBOL_LIST,
             LV_SYMBOL_SETTINGS
         };
 
-        for(uint32_t i = 0; i < 5; i++) {
+        for(uint32_t i = 0; i < 4; i++) {
             lv_obj_t * item = lv_button_create(navigation);
-            lv_obj_set_pos(item, 13 + (int32_t)i * 55, 6);
+            lv_obj_set_pos(item, 18 + (int32_t)i * 70, 6);
             lv_obj_set_size(item, 40, 36);
             lv_obj_set_style_radius(item, 18, LV_PART_MAIN);
             lv_obj_set_style_border_width(item, 0, LV_PART_MAIN);
