@@ -83,6 +83,13 @@ static void update_tabs(bool calendar_active)
 
 static void render_home(void);
 static void render_calendar(void);
+static void render_note_editor(void);
+
+static void note_back_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    render_home();
+}
 
 static void tab_clicked_cb(lv_event_t * event)
 {
@@ -99,7 +106,7 @@ static void action_clicked_cb(lv_event_t * event)
 {
     uintptr_t action = (uintptr_t)lv_event_get_user_data(event);
     if(action == 1U) {
-        set_status("笔记编辑器入口已准备");
+        render_note_editor();
     }
     else if(action == 2U) {
         set_status("录音入口已准备");
@@ -238,6 +245,32 @@ static void render_portrait_home(void)
     text_style(recent_title, &waferlog_font_16, COLOR_INK);
 
     add_note_card(content_view, 12, 320, 296, "还没有保存的笔记", "从快速入口开始创建第一条内容", COLOR_TEAL);
+}
+
+static void render_note_editor(void)
+{
+    lv_obj_clean(content_view);
+    update_tabs(false);
+
+    lv_obj_t * title = lv_label_create(content_view);
+    lv_label_set_text(title, "新建笔记");
+    lv_obj_set_pos(title, 16, 16);
+    text_style(title, &waferlog_font_16, COLOR_INK);
+
+    lv_obj_t * back_button = lv_button_create(content_view);
+    lv_obj_set_pos(back_button, 12, 248);
+    lv_obj_set_size(back_button, 52, 42);
+    lv_obj_set_style_radius(back_button, 14, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(back_button, color(COLOR_WHITE), LV_PART_MAIN);
+    lv_obj_set_style_border_width(back_button, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(back_button, color(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_add_event_cb(back_button, note_back_clicked_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * back_icon = lv_label_create(back_button);
+    lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
+    lv_obj_center(back_icon);
+    text_style(back_icon, &lv_font_montserrat_16, COLOR_MUTED);
+    set_status("笔记编辑");
 }
 
 static void render_landscape_home(void)
