@@ -2,6 +2,7 @@
 #define WAFERLOG_SERVICES_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -16,11 +17,20 @@ bool waferlog_recording_is_active(void);
 bool waferlog_wifi_connect(const char * ssid, const char * password);
 void waferlog_wifi_disconnect(void);
 bool waferlog_wifi_is_connected(void);
+bool waferlog_wifi_scan(void);
+uint32_t waferlog_wifi_scan_count(void);
+const char * waferlog_wifi_scan_ssid(uint32_t index);
+int32_t waferlog_wifi_scan_signal(uint32_t index);
+bool waferlog_wifi_scan_secured(uint32_t index);
 bool waferlog_note_upload(void);
 
 bool waferlog_ble_enable(void);
 void waferlog_ble_disable(void);
 bool waferlog_ble_is_enabled(void);
+bool waferlog_ble_scan(void);
+uint32_t waferlog_ble_scan_count(void);
+const char * waferlog_ble_scan_name(uint32_t index);
+int32_t waferlog_ble_scan_signal(uint32_t index);
 
 #ifdef __cplusplus
 }

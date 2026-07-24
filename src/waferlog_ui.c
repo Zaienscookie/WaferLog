@@ -55,6 +55,65 @@ typedef struct {
     uint32_t media;
 } accent_theme_t;
 
+typedef enum {
+    TEXT_NOTES,
+    TEXT_BLANK,
+    TEXT_RULED,
+    TEXT_GRID,
+    TEXT_DOTS,
+    TEXT_SAVED_LOCALLY,
+    TEXT_UPLOAD_COMPLETE,
+    TEXT_CONNECT_WIFI_FIRST,
+    TEXT_PAGE_CLEARED,
+    TEXT_NOTHING_TO_SAVE,
+    TEXT_NOTHING_TO_UPLOAD,
+    TEXT_PAGE_FULL,
+    TEXT_WIFI,
+    TEXT_BLUETOOTH,
+    TEXT_TAP_TO_CONNECT,
+    TEXT_TAP_TO_ENABLE,
+    TEXT_LATEST_NOTE,
+    TEXT_NO_SAVED_PAGE,
+    TEXT_SAVED_STATE,
+    TEXT_UPLOADED_STATE,
+    TEXT_UNSAVED_STATE,
+    TEXT_QUICK_CAPTURE,
+    TEXT_CAPTURE_TODAY,
+    TEXT_KEEP_IDEA,
+    TEXT_START_WRITING,
+    TEXT_DESK_CALENDAR,
+    TEXT_TODAY_AGENDA,
+    TEXT_LANGUAGE,
+    TEXT_APPEARANCE,
+    TEXT_DISPLAY_MODE,
+    TEXT_COLOR_THEME,
+    TEXT_LIGHT,
+    TEXT_DARK,
+    TEXT_NETWORK,
+    TEXT_SCAN,
+    TEXT_SCANNING,
+    TEXT_ON,
+    TEXT_OFF,
+    TEXT_CONNECT,
+    TEXT_DISCONNECT,
+    TEXT_PASSWORD,
+    TEXT_NETWORK_NAME,
+    TEXT_JOIN,
+    TEXT_CANCEL,
+    TEXT_ENTER_NETWORK_NAME,
+    TEXT_ENTER_PASSWORD,
+    TEXT_WIFI_CONNECTED,
+    TEXT_WIFI_DISCONNECTED,
+    TEXT_BLUETOOTH_ENABLED,
+    TEXT_BLUETOOTH_DISABLED,
+    TEXT_DEVICE_CONNECTED,
+    TEXT_DEVICE_DISCONNECTED,
+    TEXT_NO_RESULTS,
+    TEXT_SIGNAL,
+    TEXT_SECURED,
+    TEXT_OPEN
+} text_id_t;
+
 static const accent_theme_t accent_themes[] = {
     {0x00B58F, 0xDDF8F1, 0xAEE3EA, 0xF03D9E},
     {0x6757E8, 0xE9E5FF, 0xC8D6FF, 0xF03D9E},
@@ -84,6 +143,7 @@ static uint8_t note_page_index;
 static uint8_t note_color_index;
 static int32_t brush_size = 3;
 static bool eraser_enabled;
+static bool note_stroke_active;
 static bool note_tools_open = true;
 static bool note_focus_mode;
 static bool note_saved;
@@ -92,6 +152,7 @@ static bool note_data_initialized;
 static bool dark_mode;
 static uint8_t theme_index = 1;
 static uint8_t language_index;
+static bool rebuild_pending;
 static bool is_landscape;
 static int32_t display_width;
 static int32_t display_height;
@@ -100,6 +161,21 @@ static int32_t note_canvas_width;
 static int32_t note_canvas_height;
 static lv_point_t previous_note_point;
 static uint32_t previous_note_tick;
+static bool wifi_radio_enabled;
+static bool network_bluetooth_tab;
+static lv_obj_t * network_overlay;
+static lv_obj_t * network_sheet;
+static lv_obj_t * network_list;
+static lv_obj_t * network_status_label;
+static lv_obj_t * network_scan_button;
+static lv_obj_t * network_scan_label;
+static lv_obj_t * wifi_credentials_overlay;
+static lv_obj_t * wifi_ssid_input;
+static lv_obj_t * wifi_password_input;
+static lv_obj_t * wifi_password_toggle;
+static lv_obj_t * wifi_keyboard;
+static bool wifi_password_required;
+static char wifi_pending_ssid[64];
 static uint8_t note_canvas_buffer[
     LV_CANVAS_BUF_SIZE(
         NOTE_CANVAS_MAX_WIDTH,
@@ -115,6 +191,21 @@ static void render_calendar_page(void);
 static void render_home_page(void);
 static void show_language_overlay(void);
 static void show_appearance_overlay(void);
+static void show_network_overlay(bool bluetooth_tab);
+static void show_wifi_credentials(const char * ssid, bool password_required);
+static void refresh_network_overlay(void);
+static const char * tr(text_id_t id);
+static void network_close_cb(lv_event_t * event);
+static void network_tab_cb(lv_event_t * event);
+static void network_toggle_cb(lv_event_t * event);
+static void network_scan_cb(lv_event_t * event);
+static void network_add_cb(lv_event_t * event);
+static void network_row_cb(lv_event_t * event);
+static void wifi_credentials_close_cb(lv_event_t * event);
+static void wifi_credentials_input_cb(lv_event_t * event);
+static void wifi_password_toggle_cb(lv_event_t * event);
+static void wifi_credentials_join_cb(lv_event_t * event);
+static void rebuild_create_cb(lv_timer_t * timer);
 
 static lv_color_t color(uint32_t rgb)
 {
@@ -156,8 +247,91 @@ static uint32_t theme_accent_soft(void)
     return dark_mode ? 0x343044 : accent_themes[theme_index].accent_soft;
 }
 
+static const char * tr(text_id_t id)
+{
+    static const char * const translations[5][TEXT_OPEN + 1] = {
+        {
+            "Notes", "Blank", "Ruled", "Grid", "Dots",
+            "Saved locally", "Upload complete", "Connect Wi-Fi first",
+            "Page cleared", "Nothing to save", "Nothing to upload", "This page is full",
+            "Wi-Fi", "Bluetooth", "Tap to connect", "Tap to enable",
+            "Latest note", "No saved page yet", "Saved locally", "Uploaded to server",
+            "Unsaved changes", "Quick capture", "CAPTURE TODAY", "Keep the idea\nbefore it fades.",
+            "Start writing", "Desk calendar", "Today's agenda", "Language", "Appearance",
+            "Display mode", "Color theme", "Light", "Dark", "Network", "Scan", "Scanning",
+            "On", "Off", "Connect", "Disconnect", "Password", "Network name", "Join", "Cancel",
+            "Enter network name", "Enter password", "Wi-Fi connected", "Wi-Fi disconnected",
+            "Bluetooth enabled", "Bluetooth disabled", "Device connected", "Device disconnected",
+            "No results", "Signal", "Secured", "Open"
+        },
+        {
+            "笔记", "空白", "横线", "方格", "点阵",
+            "已保存到本地", "上传完成", "请先连接 Wi-Fi",
+            "页面已清空", "没有可保存的内容", "没有可上传的内容", "本页已写满",
+            "Wi-Fi", "蓝牙", "点击连接", "点击启用",
+            "最近笔记", "还没有保存的页面", "已保存到本地", "已上传到服务器",
+            "有未保存的修改", "快速记录", "记录今天", "把想法\n留在此刻",
+            "开始书写", "桌面日历", "今日安排", "语言", "外观",
+            "显示模式", "主题颜色", "亮色", "暗色", "网络", "搜索", "搜索中",
+            "已开启", "已关闭", "连接", "断开", "密码", "网络名称", "加入", "取消",
+            "输入网络名称", "输入密码", "Wi-Fi 已连接", "Wi-Fi 已断开",
+            "蓝牙已开启", "蓝牙已关闭", "设备已连接", "设备已断开",
+            "没有搜索结果", "信号", "已加密", "开放网络"
+        },
+        {
+            "ノート", "白紙", "横線", "方眼", "ドット",
+            "ローカル保存済み", "アップロード完了", "先に Wi-Fi に接続してください",
+            "ページを消去しました", "保存する内容がありません", "アップロードする内容がありません", "このページは満杯です",
+            "Wi-Fi", "Bluetooth", "タップして接続", "タップして有効化",
+            "最近のノート", "保存されたページはありません", "ローカル保存済み", "サーバーにアップロード済み",
+            "未保存の変更", "クイック記録", "今日を記録", "アイデアを\n今のうちに残す",
+            "書き始める", "デスクカレンダー", "今日の予定", "言語", "外観",
+            "表示モード", "カラーテーマ", "ライト", "ダーク", "ネットワーク", "検索", "検索中",
+            "オン", "オフ", "接続", "切断", "パスワード", "ネットワーク名", "参加", "キャンセル",
+            "ネットワーク名を入力", "パスワードを入力", "Wi-Fi に接続しました", "Wi-Fi を切断しました",
+            "Bluetooth を有効化しました", "Bluetooth を無効化しました", "デバイスに接続しました", "デバイスを切断しました",
+            "結果がありません", "信号", "保護あり", "オープン"
+        },
+        {
+            "Notes", "Vide", "Lignes", "Grille", "Points",
+            "Enregistre localement", "Téléversement terminé", "Connectez d'abord le Wi-Fi",
+            "Page effacée", "Rien à enregistrer", "Rien à téléverser", "Page pleine",
+            "Wi-Fi", "Bluetooth", "Appuyer pour connecter", "Appuyer pour activer",
+            "Dernière note", "Aucune page enregistrée", "Enregistré localement", "Téléversé sur le serveur",
+            "Modifications non enregistrées", "Capture rapide", "CAPTURER AUJOURD'HUI", "Gardez l'idée\navant qu'elle ne disparaisse",
+            "Commencer à écrire", "Calendrier de bureau", "Agenda du jour", "Langue", "Apparence",
+            "Mode d'affichage", "Thème de couleur", "Clair", "Sombre", "Réseau", "Rechercher", "Recherche",
+            "Activé", "Désactivé", "Connecter", "Déconnecter", "Mot de passe", "Nom du réseau", "Rejoindre", "Annuler",
+            "Saisir le nom du réseau", "Saisir le mot de passe", "Wi-Fi connecté", "Wi-Fi déconnecté",
+            "Bluetooth activé", "Bluetooth désactivé", "Appareil connecté", "Appareil déconnecté",
+            "Aucun résultat", "Signal", "Sécurisé", "Ouvert"
+        },
+        {
+            "Заметки", "Пусто", "Линии", "Сетка", "Точки",
+            "Сохранено локально", "Загрузка завершена", "Сначала подключите Wi-Fi",
+            "Страница очищена", "Нечего сохранять", "Нечего загружать", "Страница заполнена",
+            "Wi-Fi", "Bluetooth", "Нажмите для подключения", "Нажмите для включения",
+            "Последняя заметка", "Сохранённых страниц нет", "Сохранено локально", "Загружено на сервер",
+            "Есть несохранённые изменения", "Быстрая запись", "ЗАПИШИТЕ СЕГОДНЯ", "Сохраните идею\nпока она не исчезла",
+            "Начать запись", "Настольный календарь", "План на сегодня", "Язык", "Внешний вид",
+            "Режим отображения", "Цветовая тема", "Светлая", "Тёмная", "Сеть", "Поиск", "Поиск",
+            "Включено", "Выключено", "Подключить", "Отключить", "Пароль", "Имя сети", "Войти", "Отмена",
+            "Введите имя сети", "Введите пароль", "Wi-Fi подключён", "Wi-Fi отключён",
+            "Bluetooth включён", "Bluetooth выключен", "Устройство подключено", "Устройство отключено",
+            "Нет результатов", "Сигнал", "Защищено", "Открытая сеть"
+        }
+    };
+    if((uint32_t)language_index >= 5U || (uint32_t)id > (uint32_t)TEXT_OPEN) {
+        return translations[0][id];
+    }
+    return translations[language_index][id];
+}
+
 static void text_style(lv_obj_t * object, const lv_font_t * font, uint32_t rgb)
 {
+    if(language_index != 0U) {
+        font = &waferlog_font_16;
+    }
     lv_obj_set_style_text_font(object, font, LV_PART_MAIN);
     lv_obj_set_style_text_color(object, color(rgb), LV_PART_MAIN);
     lv_obj_set_style_text_letter_space(object, 0, LV_PART_MAIN);
@@ -190,6 +364,7 @@ static lv_obj_t * make_panel(
     lv_obj_set_style_border_width(panel, 0, LV_PART_MAIN);
     lv_obj_set_style_radius(panel, radius, LV_PART_MAIN);
     lv_obj_set_style_pad_all(panel, 0, LV_PART_MAIN);
+    lv_obj_clear_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
     return panel;
 }
@@ -353,29 +528,13 @@ static void home_start_clicked_cb(lv_event_t * event)
 static void wifi_clicked_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
-    if(waferlog_wifi_is_connected()) {
-        waferlog_wifi_disconnect();
-        show_toast("Wi-Fi disconnected");
-    }
-    else {
-        waferlog_wifi_connect("WaferLog Lab", "12345678");
-        show_toast("Wi-Fi connected");
-    }
-    render_home_page();
+    show_network_overlay(false);
 }
 
 static void bluetooth_clicked_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
-    if(waferlog_ble_is_enabled()) {
-        waferlog_ble_disable();
-        show_toast("Bluetooth disabled");
-    }
-    else {
-        waferlog_ble_enable();
-        show_toast("Bluetooth enabled");
-    }
-    render_home_page();
+    show_network_overlay(true);
 }
 
 static void recording_clicked_cb(lv_event_t * event)
@@ -397,13 +556,411 @@ static void recent_clicked_cb(lv_event_t * event)
     switch_page(PAGE_NOTES);
 }
 
+static void network_close_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    if(network_overlay != NULL) {
+        lv_obj_delete_async(network_overlay);
+        network_overlay = NULL;
+    }
+}
+
+static void network_tab_cb(lv_event_t * event)
+{
+    network_bluetooth_tab =
+        (bool)(uintptr_t)lv_event_get_user_data(event);
+    refresh_network_overlay();
+}
+
+static void network_toggle_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    if(network_bluetooth_tab) {
+        if(waferlog_ble_is_enabled()) {
+            waferlog_ble_disable();
+            show_toast(tr(TEXT_BLUETOOTH_DISABLED));
+        }
+        else {
+            waferlog_ble_enable();
+            waferlog_ble_scan();
+            show_toast(tr(TEXT_BLUETOOTH_ENABLED));
+        }
+    }
+    else {
+        wifi_radio_enabled = !wifi_radio_enabled;
+        if(wifi_radio_enabled) {
+            waferlog_wifi_scan();
+        }
+        else {
+            waferlog_wifi_disconnect();
+            show_toast(tr(TEXT_WIFI_DISCONNECTED));
+        }
+    }
+    refresh_network_overlay();
+    render_home_page();
+}
+
+static void network_scan_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    if(network_bluetooth_tab) {
+        if(!waferlog_ble_is_enabled()) {
+            waferlog_ble_enable();
+        }
+        waferlog_ble_scan();
+    }
+    else {
+        if(!wifi_radio_enabled) {
+            wifi_radio_enabled = true;
+        }
+        waferlog_wifi_scan();
+    }
+    refresh_network_overlay();
+}
+
+static void network_add_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    show_wifi_credentials("", false);
+}
+
+static void network_row_cb(lv_event_t * event)
+{
+    uint32_t index = (uint32_t)(uintptr_t)lv_event_get_user_data(event);
+    if(network_bluetooth_tab) {
+        if(!waferlog_ble_is_enabled()) {
+            waferlog_ble_enable();
+        }
+        show_toast(tr(TEXT_DEVICE_CONNECTED));
+        refresh_network_overlay();
+        render_home_page();
+        return;
+    }
+
+    const char * ssid = waferlog_wifi_scan_ssid(index);
+    if(ssid == NULL) {
+        return;
+    }
+    if(waferlog_wifi_scan_secured(index)) {
+        show_wifi_credentials(ssid, true);
+        return;
+    }
+    if(waferlog_wifi_connect(ssid, "")) {
+        show_toast(tr(TEXT_WIFI_CONNECTED));
+        network_close_cb(NULL);
+        render_home_page();
+    }
+}
+
+static void wifi_credentials_close_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    if(wifi_credentials_overlay != NULL) {
+        lv_obj_delete_async(wifi_credentials_overlay);
+        wifi_credentials_overlay = NULL;
+    }
+    wifi_ssid_input = NULL;
+    wifi_password_input = NULL;
+    wifi_password_toggle = NULL;
+    wifi_keyboard = NULL;
+}
+
+static void wifi_credentials_input_cb(lv_event_t * event)
+{
+    lv_obj_t * target = lv_event_get_target_obj(event);
+    if(wifi_keyboard != NULL) {
+        lv_keyboard_set_textarea(wifi_keyboard, target);
+        lv_obj_remove_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(wifi_keyboard);
+    }
+}
+
+static void wifi_password_toggle_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    if(wifi_password_input == NULL) {
+        return;
+    }
+    bool visible = lv_textarea_get_password_mode(wifi_password_input);
+    lv_textarea_set_password_mode(wifi_password_input, !visible);
+    if(wifi_password_toggle != NULL) {
+        lv_label_set_text(
+            lv_obj_get_child(wifi_password_toggle, 0),
+            visible ? LV_SYMBOL_EYE_CLOSE : LV_SYMBOL_EYE_OPEN
+        );
+    }
+}
+
+static void wifi_credentials_join_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    if(wifi_ssid_input == NULL || wifi_password_input == NULL) {
+        return;
+    }
+    const char * ssid = lv_textarea_get_text(wifi_ssid_input);
+    const char * password = lv_textarea_get_text(wifi_password_input);
+    if(ssid == NULL || ssid[0] == '\0') {
+        show_toast(tr(TEXT_ENTER_NETWORK_NAME));
+        return;
+    }
+    if(wifi_password_required &&
+       (password == NULL || password[0] == '\0')) {
+        show_toast(tr(TEXT_ENTER_PASSWORD));
+        return;
+    }
+    if(!waferlog_wifi_connect(ssid, password != NULL ? password : "")) {
+        show_toast(tr(TEXT_CONNECT_WIFI_FIRST));
+        return;
+    }
+    show_toast(tr(TEXT_WIFI_CONNECTED));
+    wifi_credentials_close_cb(NULL);
+    network_close_cb(NULL);
+    render_home_page();
+}
+
+static void refresh_network_overlay(void)
+{
+    if(network_overlay == NULL || network_list == NULL) {
+        return;
+    }
+    lv_obj_clean(network_list);
+    if(network_status_label != NULL) {
+        lv_label_set_text(
+            network_status_label,
+            network_bluetooth_tab
+                ? (waferlog_ble_is_enabled() ? tr(TEXT_ON) : tr(TEXT_OFF))
+                : (wifi_radio_enabled ? tr(TEXT_ON) : tr(TEXT_OFF))
+        );
+    }
+    if(network_scan_label != NULL) {
+        lv_label_set_text(network_scan_label, tr(TEXT_SCAN));
+    }
+
+    uint32_t count = network_bluetooth_tab
+        ? waferlog_ble_scan_count()
+        : waferlog_wifi_scan_count();
+    if(count == 0U) {
+        lv_obj_t * empty = lv_label_create(network_list);
+        lv_label_set_text(empty, tr(TEXT_NO_RESULTS));
+        lv_obj_set_pos(empty, 8, 8);
+        text_style(empty, &lv_font_montserrat_14, theme_muted());
+        return;
+    }
+
+    for(uint32_t i = 0; i < count; i++) {
+        const char * name = network_bluetooth_tab
+            ? waferlog_ble_scan_name(i)
+            : waferlog_wifi_scan_ssid(i);
+        int32_t signal = network_bluetooth_tab
+            ? waferlog_ble_scan_signal(i)
+            : waferlog_wifi_scan_signal(i);
+        lv_obj_t * row = make_panel(
+            network_list,
+            0,
+            (int32_t)i * 48,
+            lv_obj_get_width(network_list),
+            42,
+            theme_surface(),
+            8
+        );
+        lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_add_event_cb(row, network_row_cb, LV_EVENT_CLICKED,
+                            (void *)(uintptr_t)i);
+        lv_obj_t * name_label = lv_label_create(row);
+        lv_label_set_text(name_label, name != NULL ? name : "--");
+        lv_obj_set_pos(name_label, 10, 5);
+        text_style(name_label, &lv_font_montserrat_14, theme_text());
+
+        char detail[64];
+        lv_snprintf(
+            detail,
+            sizeof(detail),
+            "%s %d%%  %s",
+            tr(TEXT_SIGNAL),
+            (int)signal,
+            network_bluetooth_tab
+                ? tr(TEXT_CONNECT)
+                : (waferlog_wifi_scan_secured(i) ? tr(TEXT_SECURED) : tr(TEXT_OPEN))
+        );
+        lv_obj_t * detail_label = lv_label_create(row);
+        lv_label_set_text(detail_label, detail);
+        lv_obj_set_pos(detail_label, 10, 23);
+        text_style(detail_label, &lv_font_montserrat_12, theme_muted());
+    }
+}
+
+static void show_network_overlay(bool bluetooth_tab)
+{
+    if(network_overlay != NULL) {
+        return;
+    }
+    network_bluetooth_tab = bluetooth_tab;
+    if(network_bluetooth_tab) {
+        if(!waferlog_ble_is_enabled()) {
+            waferlog_ble_enable();
+        }
+        waferlog_ble_scan();
+    }
+    else {
+        wifi_radio_enabled = true;
+        waferlog_wifi_scan();
+    }
+
+    int32_t sheet_height = is_landscape ? 286 : 430;
+    network_overlay = make_panel(
+        app_root, 0, 0, display_width, display_height, 0x000000, 0
+    );
+    lv_obj_set_style_bg_opa(network_overlay, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_move_foreground(network_overlay);
+    network_sheet = make_panel(
+        network_overlay,
+        is_landscape ? (display_width - 460) / 2 : 0,
+        display_height - sheet_height,
+        is_landscape ? 460 : display_width,
+        sheet_height,
+        theme_surface(),
+        18
+    );
+    int32_t sheet_width = lv_obj_get_width(network_sheet);
+    lv_obj_t * title = lv_label_create(network_sheet);
+    lv_label_set_text(title, tr(TEXT_NETWORK));
+    lv_obj_set_pos(title, 16, 14);
+    text_style(title, &lv_font_montserrat_20, theme_text());
+    make_button(
+        network_sheet, sheet_width - 52, 10, 40, 36, LV_SYMBOL_CLOSE,
+        theme_surface(), theme_text(), 10, &lv_font_montserrat_16,
+        network_close_cb, 0
+    );
+    make_button(
+        network_sheet, 16, 54, (sheet_width - 42) / 2, 36, tr(TEXT_WIFI),
+        !network_bluetooth_tab ? theme_accent_soft() : theme_bg(),
+        !network_bluetooth_tab ? theme_accent() : theme_muted(),
+        9, &lv_font_montserrat_14, network_tab_cb, 0
+    );
+    make_button(
+        network_sheet, 26 + (sheet_width - 42) / 2, 54,
+        (sheet_width - 42) / 2, 36, tr(TEXT_BLUETOOTH),
+        network_bluetooth_tab ? theme_accent_soft() : theme_bg(),
+        network_bluetooth_tab ? theme_accent() : theme_muted(),
+        9, &lv_font_montserrat_14, network_tab_cb, 1
+    );
+    lv_obj_t * toggle = make_button(
+        network_sheet, 16, 94, 92, 32,
+        network_bluetooth_tab
+            ? (waferlog_ble_is_enabled() ? tr(TEXT_ON) : tr(TEXT_OFF))
+            : (wifi_radio_enabled ? tr(TEXT_ON) : tr(TEXT_OFF)),
+        theme_accent_soft(), theme_accent(), 9, &lv_font_montserrat_12,
+        network_toggle_cb, 0
+    );
+    network_status_label = lv_obj_get_child(toggle, 0);
+    lv_obj_set_style_text_align(network_status_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    make_button(
+        network_sheet, sheet_width - 112, 94, 96, 32, tr(TEXT_SCAN),
+        theme_accent_soft(), theme_accent(), 9, &lv_font_montserrat_12,
+        network_scan_cb, 0
+    );
+    network_scan_button = lv_obj_get_child(network_sheet, lv_obj_get_child_count(network_sheet) - 1);
+    network_scan_label = lv_obj_get_child(network_scan_button, 0);
+    if(!network_bluetooth_tab) {
+        make_button(
+            network_sheet, 16, 132, 120, 30, tr(TEXT_NETWORK_NAME),
+            theme_bg(), theme_text(), 8, &lv_font_montserrat_12,
+            network_add_cb, 0
+        );
+    }
+    network_list = make_panel(
+        network_sheet, 12, network_bluetooth_tab ? 132 : 168,
+        sheet_width - 24, sheet_height - (network_bluetooth_tab ? 144 : 180),
+        theme_bg(), 10
+    );
+    refresh_network_overlay();
+}
+
+static void show_wifi_credentials(const char * ssid, bool password_required)
+{
+    if(wifi_credentials_overlay != NULL) {
+        return;
+    }
+    wifi_password_required = password_required;
+    lv_strlcpy(wifi_pending_ssid, ssid != NULL ? ssid : "",
+               sizeof(wifi_pending_ssid));
+    int32_t sheet_height = is_landscape ? 250 : 330;
+    wifi_credentials_overlay = make_panel(
+        app_root, 0, 0, display_width, display_height, 0x000000, 0
+    );
+    lv_obj_set_style_bg_opa(wifi_credentials_overlay, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_move_foreground(wifi_credentials_overlay);
+    lv_obj_t * sheet = make_panel(
+        wifi_credentials_overlay,
+        is_landscape ? (display_width - 460) / 2 : 0,
+        display_height - sheet_height,
+        is_landscape ? 460 : display_width,
+        sheet_height,
+        theme_surface(),
+        18
+    );
+    int32_t sheet_width = lv_obj_get_width(sheet);
+    lv_obj_t * title = lv_label_create(sheet);
+    lv_label_set_text(title, tr(TEXT_WIFI));
+    lv_obj_set_pos(title, 16, 14);
+    text_style(title, &lv_font_montserrat_20, theme_text());
+    make_button(
+        sheet, sheet_width - 52, 10, 40, 36, LV_SYMBOL_CLOSE,
+        theme_surface(), theme_text(), 10, &lv_font_montserrat_16,
+        wifi_credentials_close_cb, 0
+    );
+    wifi_ssid_input = lv_textarea_create(sheet);
+    lv_obj_set_pos(wifi_ssid_input, 16, 58);
+    lv_obj_set_size(wifi_ssid_input, sheet_width - 32, 42);
+    lv_textarea_set_one_line(wifi_ssid_input, true);
+    lv_textarea_set_placeholder_text(wifi_ssid_input, tr(TEXT_NETWORK_NAME));
+    lv_textarea_set_text(wifi_ssid_input, wifi_pending_ssid);
+    lv_obj_set_style_bg_color(wifi_ssid_input, color(theme_bg()), LV_PART_MAIN);
+    lv_obj_set_style_text_color(wifi_ssid_input, color(theme_text()), LV_PART_MAIN);
+    lv_obj_set_style_text_font(wifi_ssid_input, &waferlog_font_16, LV_PART_MAIN);
+    lv_obj_add_event_cb(wifi_ssid_input, wifi_credentials_input_cb,
+                        LV_EVENT_FOCUSED, NULL);
+
+    wifi_password_input = lv_textarea_create(sheet);
+    lv_obj_set_pos(wifi_password_input, 16, 108);
+    lv_obj_set_size(wifi_password_input, sheet_width - 80, 42);
+    lv_textarea_set_one_line(wifi_password_input, true);
+    lv_textarea_set_password_mode(wifi_password_input, true);
+    lv_textarea_set_placeholder_text(wifi_password_input, tr(TEXT_PASSWORD));
+    lv_obj_set_style_bg_color(wifi_password_input, color(theme_bg()), LV_PART_MAIN);
+    lv_obj_set_style_text_color(wifi_password_input, color(theme_text()), LV_PART_MAIN);
+    lv_obj_set_style_text_font(wifi_password_input, &waferlog_font_16, LV_PART_MAIN);
+    lv_obj_add_event_cb(wifi_password_input, wifi_credentials_input_cb,
+                        LV_EVENT_FOCUSED, NULL);
+    wifi_password_toggle = make_button(
+        sheet, sheet_width - 56, 108, 40, 42, LV_SYMBOL_EYE_OPEN,
+        theme_bg(), theme_text(), 8, &lv_font_montserrat_16,
+        wifi_password_toggle_cb, 0
+    );
+    make_button(
+        sheet, 16, sheet_height - 58, (sheet_width - 42) / 2, 40,
+        tr(TEXT_CANCEL), theme_bg(), theme_text(), 9,
+        &lv_font_montserrat_14, wifi_credentials_close_cb, 0
+    );
+    make_button(
+        sheet, 26 + (sheet_width - 42) / 2, sheet_height - 58,
+        (sheet_width - 42) / 2, 40, tr(TEXT_JOIN),
+        theme_accent(), 0xFFFFFF, 9, &lv_font_montserrat_14,
+        wifi_credentials_join_cb, 0
+    );
+    wifi_keyboard = lv_keyboard_create(wifi_credentials_overlay);
+    lv_obj_set_size(wifi_keyboard, display_width, 180);
+    lv_obj_align(wifi_keyboard, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_add_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void note_draw_paper(void)
 {
     if(note_canvas == NULL) {
         return;
     }
 
-    lv_canvas_fill_bg(note_canvas, color(0xFFFFFF), LV_OPA_COVER);
+    lv_canvas_fill_bg(note_canvas, color(dark_mode ? 0x171B21 : 0xFFFFFF), LV_OPA_COVER);
     uint8_t paper = note_pages[note_page_index].paper;
     if(paper == PAPER_BLANK) {
         return;
@@ -413,7 +970,7 @@ static void note_draw_paper(void)
     lv_canvas_init_layer(note_canvas, &layer);
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
-    line.color = color(0xDCE7ED);
+    line.color = color(dark_mode ? 0x36404A : 0xDCE7ED);
     line.width = 1;
 
     if(paper == PAPER_RULED || paper == PAPER_GRID) {
@@ -458,11 +1015,13 @@ static void note_draw_stroke(const note_stroke_t * stroke)
     lv_canvas_init_layer(note_canvas, &layer);
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
-    line.color = color(
-        stroke->color_index == UINT8_MAX
-            ? 0xFFFFFF
-            : ink_colors[stroke->color_index % 4]
-    );
+    uint32_t ink_color = stroke->color_index == UINT8_MAX
+        ? (dark_mode ? 0x171B21 : 0xFFFFFF)
+        : ink_colors[stroke->color_index % 4];
+    if(!eraser_enabled && dark_mode && stroke->color_index == 0) {
+        ink_color = 0xE8EEF4;
+    }
+    line.color = color(ink_color);
     line.width = stroke->width;
     line.round_start = 1;
     line.round_end = 1;
@@ -486,7 +1045,16 @@ static void note_redraw_canvas(void)
 static void note_canvas_event_cb(lv_event_t * event)
 {
     lv_event_code_t code = lv_event_get_code(event);
-    if(code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING) {
+    if(code != LV_EVENT_PRESSED &&
+       code != LV_EVENT_PRESSING &&
+       code != LV_EVENT_RELEASED &&
+       code != LV_EVENT_PRESS_LOST) {
+        return;
+    }
+    lv_event_stop_bubbling(event);
+
+    if(code == LV_EVENT_RELEASED || code == LV_EVENT_PRESS_LOST) {
+        note_stroke_active = false;
         return;
     }
 
@@ -507,24 +1075,31 @@ static void note_canvas_event_cb(lv_event_t * event)
     if(code == LV_EVENT_PRESSED) {
         previous_note_point = point;
         previous_note_tick = lv_tick_get();
+        note_stroke_active = true;
+        return;
+    }
+    if(!note_stroke_active) {
+        return;
     }
 
     uint32_t elapsed = lv_tick_elaps(previous_note_tick);
     int32_t distance =
         LV_ABS(point.x - previous_note_point.x) +
         LV_ABS(point.y - previous_note_point.y);
+    if(distance == 0) {
+        return;
+    }
     int32_t speed = elapsed > 0 ? distance * 10 / (int32_t)elapsed : distance * 10;
-    int32_t stroke_width = eraser_enabled ? brush_size + 7 : brush_size;
+    int32_t stroke_width = brush_size;
     if(!eraser_enabled) {
-        if(speed <= 2) stroke_width += 3;
-        else if(speed <= 5) stroke_width += 1;
+        if(speed <= 2) stroke_width += 1;
         else if(speed >= 12) stroke_width -= 1;
     }
-    stroke_width = LV_CLAMP(1, stroke_width, 18);
+    stroke_width = LV_CLAMP(1, stroke_width, eraser_enabled ? 16 : 12);
 
     note_page_t * page = &note_pages[note_page_index];
     if(page->stroke_count >= NOTE_STROKE_LIMIT) {
-        show_toast("This page is full");
+        show_toast(tr(TEXT_PAGE_FULL));
         return;
     }
 
@@ -571,12 +1146,12 @@ static void note_save_clicked_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
     if(!any_handwriting()) {
-        show_toast("Nothing to save");
+        show_toast(tr(TEXT_NOTHING_TO_SAVE));
         return;
     }
     note_saved = true;
     note_uploaded = false;
-    show_toast("Saved locally");
+    show_toast(tr(TEXT_SAVED_LOCALLY));
     render_note_page();
 }
 
@@ -584,17 +1159,17 @@ static void note_upload_clicked_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
     if(!any_handwriting()) {
-        show_toast("Nothing to upload");
+        show_toast(tr(TEXT_NOTHING_TO_UPLOAD));
         return;
     }
     if(!waferlog_wifi_is_connected()) {
-        show_toast("Connect Wi-Fi first");
+        show_toast(tr(TEXT_CONNECT_WIFI_FIRST));
         return;
     }
     if(waferlog_note_upload()) {
         note_saved = true;
         note_uploaded = true;
-        show_toast("Upload complete");
+        show_toast(tr(TEXT_UPLOAD_COMPLETE));
         render_note_page();
     }
 }
@@ -636,13 +1211,14 @@ static void note_clear_clicked_cb(lv_event_t * event)
     note_saved = false;
     note_uploaded = false;
     note_redraw_canvas();
-    show_toast("Page cleared");
+    show_toast(tr(TEXT_PAGE_CLEARED));
 }
 
 static void render_note_page(void)
 {
     lv_obj_clean(content_view);
     note_canvas = NULL;
+    note_stroke_active = false;
     navigation_update();
 
     int32_t content_height = lv_obj_get_height(content_view);
@@ -654,7 +1230,7 @@ static void render_note_page(void)
             content_view, 0, 0, display_width, primary_height, theme_bg(), 0
         );
         lv_obj_t * title = lv_label_create(primary);
-        lv_label_set_text(title, "Notes");
+        lv_label_set_text(title, tr(TEXT_NOTES));
         lv_obj_set_pos(title, 10, 17);
         text_style(title, &lv_font_montserrat_16, theme_text());
 
@@ -719,7 +1295,17 @@ static void render_note_page(void)
         lv_obj_t * dropdown = lv_dropdown_create(tools);
         lv_obj_set_pos(dropdown, 8, 5);
         lv_obj_set_size(dropdown, 72, 34);
-        lv_dropdown_set_options(dropdown, "Blank\nRuled\nGrid\nDots");
+        char paper_options[96];
+        lv_snprintf(
+            paper_options,
+            sizeof(paper_options),
+            "%s\n%s\n%s\n%s",
+            tr(TEXT_BLANK),
+            tr(TEXT_RULED),
+            tr(TEXT_GRID),
+            tr(TEXT_DOTS)
+        );
+        lv_dropdown_set_options(dropdown, paper_options);
         lv_dropdown_set_selected(dropdown, note_pages[note_page_index].paper);
         lv_obj_set_style_bg_color(dropdown, color(theme_surface()), LV_PART_MAIN);
         lv_obj_set_style_text_color(dropdown, color(theme_text()), LV_PART_MAIN);
@@ -811,8 +1397,15 @@ static void render_note_page(void)
     );
     lv_obj_set_pos(note_canvas, 0, canvas_y);
     lv_obj_set_style_border_width(note_canvas, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(note_canvas, color(0xD9E2E7), LV_PART_MAIN);
+    lv_obj_set_style_border_color(
+        note_canvas,
+        color(dark_mode ? 0x46515C : 0xD9E2E7),
+        LV_PART_MAIN
+    );
     lv_obj_add_flag(note_canvas, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(note_canvas, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(note_canvas, LV_OBJ_FLAG_PRESS_LOCK);
+    lv_obj_set_scrollbar_mode(note_canvas, LV_SCROLLBAR_MODE_OFF);
     lv_obj_add_event_cb(note_canvas, note_canvas_event_cb, LV_EVENT_ALL, NULL);
     note_redraw_canvas();
 
@@ -823,8 +1416,8 @@ static void render_note_page(void)
         36,
         36,
         note_focus_mode ? LV_SYMBOL_EYE_OPEN : LV_SYMBOL_EYE_CLOSE,
-        0xFFFFFF,
-        0x18202A,
+        theme_surface(),
+        theme_text(),
         10,
         &lv_font_montserrat_16,
         note_focus_clicked_cb,
@@ -909,12 +1502,12 @@ static lv_obj_t * make_home_tile(
     lv_obj_t * title_label = lv_label_create(tile);
     lv_label_set_text(title_label, title);
     lv_obj_set_pos(title_label, 16, height - 59);
-    text_style(title_label, &lv_font_montserrat_20, 0x121318);
+    text_style(title_label, &lv_font_montserrat_20, theme_text());
 
     lv_obj_t * detail_label = lv_label_create(tile);
     lv_label_set_text(detail_label, detail);
     lv_obj_set_pos(detail_label, 16, height - 29);
-    text_style(detail_label, &lv_font_montserrat_12, 0x555962);
+    text_style(detail_label, &lv_font_montserrat_12, theme_muted());
     return tile;
 }
 
@@ -943,12 +1536,12 @@ static void render_home_portrait(void)
 
     uint32_t hero_text = dark_mode ? 0xFFFFFF : 0x121318;
     lv_obj_t * kicker = lv_label_create(hero);
-    lv_label_set_text(kicker, "CAPTURE TODAY");
+    lv_label_set_text(kicker, tr(TEXT_CAPTURE_TODAY));
     lv_obj_set_pos(kicker, 14, 13);
     text_style(kicker, &lv_font_montserrat_14, hero_text);
 
     lv_obj_t * hero_title = lv_label_create(hero);
-    lv_label_set_text(hero_title, "Keep the idea\nbefore it fades.");
+    lv_label_set_text(hero_title, tr(TEXT_KEEP_IDEA));
     lv_obj_set_pos(hero_title, 14, 34);
     text_style(hero_title, &lv_font_montserrat_24, hero_text);
 
@@ -958,7 +1551,7 @@ static void render_home_portrait(void)
         91,
         118,
         34,
-        "Start writing",
+        tr(TEXT_START_WRITING),
         0x121318,
         0xFFFFFF,
         10,
@@ -976,7 +1569,7 @@ static void render_home_portrait(void)
     make_home_geometry(hero, content_width);
 
     lv_obj_t * quick_title = lv_label_create(content_view);
-    lv_label_set_text(quick_title, "Quick capture");
+    lv_label_set_text(quick_title, tr(TEXT_QUICK_CAPTURE));
     lv_obj_set_pos(quick_title, margin, 166);
     text_style(quick_title, &lv_font_montserrat_24, theme_text());
 
@@ -995,9 +1588,9 @@ static void render_home_portrait(void)
         132,
         dark_mode ? 0x24616A : 0xAEE3EA,
         LV_SYMBOL_WIFI,
-        0x121318,
-        "WiFi",
-        waferlog_wifi_is_connected() ? "WaferLog Lab" : "Tap to connect",
+        theme_text(),
+        tr(TEXT_WIFI),
+        waferlog_wifi_is_connected() ? "WaferLog Lab" : tr(TEXT_TAP_TO_CONNECT),
         wifi_clicked_cb
     );
     make_home_tile(
@@ -1009,8 +1602,8 @@ static void render_home_portrait(void)
         theme_surface(),
         LV_SYMBOL_BLUETOOTH,
         accent_themes[theme_index].media,
-        "Bluetooth",
-        waferlog_ble_is_enabled() ? "WaferLog T5AI" : "Tap to enable",
+        tr(TEXT_BLUETOOTH),
+        waferlog_ble_is_enabled() ? "WaferLog T5AI" : tr(TEXT_TAP_TO_ENABLE),
         bluetooth_clicked_cb
     );
 
@@ -1037,7 +1630,7 @@ static void render_home_portrait(void)
     text_style(file_label, &lv_font_montserrat_16, 0xFFFFFF);
 
     lv_obj_t * recent_title = lv_label_create(recent);
-    lv_label_set_text(recent_title, "Latest note");
+    lv_label_set_text(recent_title, tr(TEXT_LATEST_NOTE));
     lv_obj_set_pos(recent_title, 66, 13);
     text_style(recent_title, &lv_font_montserrat_16, theme_text());
 
@@ -1045,8 +1638,9 @@ static void render_home_portrait(void)
     lv_label_set_text(
         recent_detail,
         any_handwriting()
-            ? (note_uploaded ? "Uploaded to server" : (note_saved ? "Saved locally" : "Unsaved changes"))
-            : "No saved page yet"
+            ? (note_uploaded ? tr(TEXT_UPLOADED_STATE) :
+               (note_saved ? tr(TEXT_SAVED_STATE) : tr(TEXT_UNSAVED_STATE)))
+            : tr(TEXT_NO_SAVED_PAGE)
     );
     lv_obj_set_pos(recent_detail, 66, 36);
     text_style(recent_detail, &lv_font_montserrat_12, theme_muted());
@@ -1115,11 +1709,11 @@ static void render_home_landscape(void)
 
     uint32_t hero_text = dark_mode ? 0xFFFFFF : 0x121318;
     lv_obj_t * kicker = lv_label_create(hero);
-    lv_label_set_text(kicker, "CAPTURE TODAY");
+    lv_label_set_text(kicker, tr(TEXT_CAPTURE_TODAY));
     lv_obj_set_pos(kicker, 16, 16);
     text_style(kicker, &lv_font_montserrat_14, hero_text);
     lv_obj_t * title = lv_label_create(hero);
-    lv_label_set_text(title, "Keep the idea\nbefore it fades.");
+    lv_label_set_text(title, tr(TEXT_KEEP_IDEA));
     lv_obj_set_pos(title, 16, 43);
     text_style(title, &lv_font_montserrat_24, hero_text);
     make_button(
@@ -1128,7 +1722,7 @@ static void render_home_landscape(void)
         112,
         118,
         36,
-        "Start writing",
+        tr(TEXT_START_WRITING),
         0x121318,
         0xFFFFFF,
         10,
@@ -1148,9 +1742,9 @@ static void render_home_landscape(void)
         120,
         dark_mode ? 0x24616A : 0xAEE3EA,
         LV_SYMBOL_WIFI,
-        0x121318,
-        "WiFi",
-        waferlog_wifi_is_connected() ? "WaferLog Lab" : "Tap to connect",
+        theme_text(),
+        tr(TEXT_WIFI),
+        waferlog_wifi_is_connected() ? "WaferLog Lab" : tr(TEXT_TAP_TO_CONNECT),
         wifi_clicked_cb
     );
     make_home_tile(
@@ -1162,8 +1756,8 @@ static void render_home_landscape(void)
         theme_surface(),
         LV_SYMBOL_BLUETOOTH,
         accent_themes[theme_index].media,
-        "Bluetooth",
-        waferlog_ble_is_enabled() ? "WaferLog T5AI" : "Tap to enable",
+        tr(TEXT_BLUETOOTH),
+        waferlog_ble_is_enabled() ? "WaferLog T5AI" : tr(TEXT_TAP_TO_ENABLE),
         bluetooth_clicked_cb
     );
 
@@ -1179,13 +1773,13 @@ static void render_home_landscape(void)
     lv_obj_add_flag(recent, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(recent, recent_clicked_cb, LV_EVENT_CLICKED, NULL);
     lv_obj_t * title_label = lv_label_create(recent);
-    lv_label_set_text(title_label, "Latest note");
+    lv_label_set_text(title_label, tr(TEXT_LATEST_NOTE));
     lv_obj_set_pos(title_label, 16, 14);
     text_style(title_label, &lv_font_montserrat_16, theme_text());
     lv_obj_t * detail = lv_label_create(recent);
     lv_label_set_text(
         detail,
-        any_handwriting() ? "Open the current notebook" : "No saved page yet"
+        any_handwriting() ? tr(TEXT_NOTES) : tr(TEXT_NO_SAVED_PAGE)
     );
     lv_obj_set_pos(detail, 16, 42);
     text_style(detail, &lv_font_montserrat_12, theme_muted());
@@ -1239,9 +1833,9 @@ static void render_calendar_page(void)
     lv_obj_set_style_bg_grad_dir(hero, LV_GRAD_DIR_HOR, LV_PART_MAIN);
 
     lv_obj_t * desk = lv_label_create(hero);
-    lv_label_set_text(desk, "Desk calendar");
+    lv_label_set_text(desk, tr(TEXT_DESK_CALENDAR));
     lv_obj_set_pos(desk, 14, 14);
-    text_style(desk, &lv_font_montserrat_16, 0x121318);
+    text_style(desk, &lv_font_montserrat_16, theme_text());
 
     char clock_text[8];
     lv_snprintf(
@@ -1254,7 +1848,7 @@ static void render_calendar_page(void)
     lv_obj_t * clock = lv_label_create(hero);
     lv_label_set_text(clock, clock_text);
     lv_obj_set_pos(clock, 14, 38);
-    text_style(clock, &lv_font_montserrat_32, 0x121318);
+    text_style(clock, &lv_font_montserrat_32, theme_text());
 
     char date_text[16];
     lv_snprintf(
@@ -1268,24 +1862,24 @@ static void render_calendar_page(void)
     lv_obj_t * date = lv_label_create(hero);
     lv_label_set_text(date, date_text);
     lv_obj_set_pos(date, 14, 78);
-    text_style(date, &lv_font_montserrat_16, 0x121318);
+    text_style(date, &lv_font_montserrat_16, theme_text());
 
     lv_obj_t * weather = lv_label_create(hero);
     lv_label_set_text(weather, "22 C\nClear");
     lv_obj_set_pos(weather, 14, 102);
-    text_style(weather, &lv_font_montserrat_16, 0x121318);
+    text_style(weather, &lv_font_montserrat_16, theme_text());
 
     lv_obj_t * agenda_title = lv_label_create(hero);
-    lv_label_set_text(agenda_title, "Today's agenda");
+    lv_label_set_text(agenda_title, tr(TEXT_TODAY_AGENDA));
     lv_obj_set_pos(agenda_title, is_landscape ? 158 : 176, 14);
-    text_style(agenda_title, &lv_font_montserrat_14, 0x121318);
+    text_style(agenda_title, &lv_font_montserrat_14, theme_text());
 
     lv_obj_t * agenda = lv_label_create(hero);
     lv_label_set_text(agenda, LV_SYMBOL_OK " Review notes\n\n  Upload recap\n\n  Call at 16:00");
     lv_obj_set_pos(agenda, is_landscape ? 158 : 176, 38);
     lv_obj_set_width(agenda, hero_width - (is_landscape ? 168 : 186));
     lv_label_set_long_mode(agenda, LV_LABEL_LONG_WRAP);
-    text_style(agenda, &lv_font_montserrat_14, 0x121318);
+    text_style(agenda, &lv_font_montserrat_14, theme_text());
 
     int32_t calendar_x = is_landscape ? hero_width + margin * 2 : margin;
     int32_t calendar_y = is_landscape ? margin : hero_height + margin * 2;
@@ -1326,18 +1920,61 @@ static void render_current_page(void)
     }
 }
 
+static void rebuild_create_cb(lv_timer_t * timer)
+{
+    LV_UNUSED(timer);
+    waferlog_ui_create();
+}
+
 static void rebuild_ui_async(void * user_data)
 {
     LV_UNUSED(user_data);
+    rebuild_pending = false;
+    if(clock_timer != NULL) {
+        lv_timer_delete(clock_timer);
+        clock_timer = NULL;
+    }
+    if(toast_timer != NULL) {
+        lv_timer_delete(toast_timer);
+        toast_timer = NULL;
+    }
     if(app_root != NULL) {
-        lv_obj_delete(app_root);
+        lv_obj_delete_async(app_root);
         app_root = NULL;
     }
-    waferlog_ui_create();
+    content_view = NULL;
+    header_clock_label = NULL;
+    language_label = NULL;
+    note_canvas = NULL;
+    toast_label = NULL;
+    network_overlay = NULL;
+    network_sheet = NULL;
+    network_list = NULL;
+    network_status_label = NULL;
+    network_scan_button = NULL;
+    network_scan_label = NULL;
+    wifi_credentials_overlay = NULL;
+    wifi_ssid_input = NULL;
+    wifi_password_input = NULL;
+    wifi_password_toggle = NULL;
+    wifi_keyboard = NULL;
+    for(uint32_t i = 0; i < 3; i++) {
+        nav_buttons[i] = NULL;
+    }
+    lv_timer_t * timer = lv_timer_create(
+        rebuild_create_cb,
+        1,
+        NULL
+    );
+    lv_timer_set_repeat_count(timer, 1);
 }
 
 static void request_rebuild(void)
 {
+    if(rebuild_pending) {
+        return;
+    }
+    rebuild_pending = true;
     lv_async_call(rebuild_ui_async, NULL);
 }
 
@@ -1382,11 +2019,12 @@ static void language_selected_cb(lv_event_t * event)
 {
     language_index = (uint8_t)(uintptr_t)lv_event_get_user_data(event);
     static const char * codes[] = {"EN", "中", "日", "FR", "RU"};
+    lv_obj_t * overlay = lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target_obj(event)));
+    lv_obj_delete_async(overlay);
     if(language_label != NULL) {
         lv_label_set_text(language_label, codes[language_index]);
     }
-    lv_obj_t * overlay = lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target_obj(event)));
-    lv_obj_delete_async(overlay);
+    request_rebuild();
 }
 
 static lv_obj_t * create_overlay(int32_t sheet_height, const char * title)
@@ -1442,7 +2080,7 @@ static lv_obj_t * create_overlay(int32_t sheet_height, const char * title)
 static void show_language_overlay(void)
 {
     int32_t height = is_landscape ? 300 : 306;
-    lv_obj_t * overlay = create_overlay(height, "Language");
+    lv_obj_t * overlay = create_overlay(height, tr(TEXT_LANGUAGE));
     lv_obj_t * sheet = lv_obj_get_child(overlay, 0);
     int32_t sheet_width = is_landscape ? LV_MIN(460, display_width) : display_width;
     static const char * names[] = {
@@ -1487,26 +2125,30 @@ static void appearance_color_selected_cb(lv_event_t * event)
 static void show_appearance_overlay(void)
 {
     int32_t height = is_landscape ? 270 : 266;
-    lv_obj_t * overlay = create_overlay(height, "Appearance");
+    lv_obj_t * overlay = create_overlay(height, tr(TEXT_APPEARANCE));
     lv_obj_t * sheet = lv_obj_get_child(overlay, 0);
     int32_t sheet_width = is_landscape ? LV_MIN(460, display_width) : display_width;
 
     lv_obj_t * mode_label = lv_label_create(sheet);
-    lv_label_set_text(mode_label, "Display mode");
+    lv_label_set_text(mode_label, tr(TEXT_DISPLAY_MODE));
     lv_obj_set_pos(mode_label, 16, 62);
-    text_style(mode_label, &lv_font_montserrat_14, theme_muted());
+    text_style(mode_label, &waferlog_font_14, theme_muted());
 
+    char light_text[64];
+    char dark_text[64];
+    lv_snprintf(light_text, sizeof(light_text), LV_SYMBOL_EYE_OPEN "  %s", tr(TEXT_LIGHT));
+    lv_snprintf(dark_text, sizeof(dark_text), LV_SYMBOL_EYE_CLOSE "  %s", tr(TEXT_DARK));
     make_button(
         sheet,
         16,
         90,
         (sheet_width - 44) / 2,
         46,
-        LV_SYMBOL_EYE_OPEN "  Light",
+        light_text,
         !dark_mode ? theme_accent_soft() : theme_surface(),
         !dark_mode ? theme_accent() : theme_text(),
         10,
-        &lv_font_montserrat_16,
+        &waferlog_font_16,
         appearance_mode_selected_cb,
         0U
     );
@@ -1516,19 +2158,19 @@ static void show_appearance_overlay(void)
         90,
         (sheet_width - 44) / 2,
         46,
-        LV_SYMBOL_EYE_CLOSE "  Dark",
+        dark_text,
         dark_mode ? theme_accent_soft() : theme_surface(),
         dark_mode ? theme_accent() : theme_text(),
         10,
-        &lv_font_montserrat_16,
+        &waferlog_font_16,
         appearance_mode_selected_cb,
         1U
     );
 
     lv_obj_t * color_label = lv_label_create(sheet);
-    lv_label_set_text(color_label, "Color theme");
+    lv_label_set_text(color_label, tr(TEXT_COLOR_THEME));
     lv_obj_set_pos(color_label, 16, 150);
-    text_style(color_label, &lv_font_montserrat_14, theme_muted());
+    text_style(color_label, &waferlog_font_14, theme_muted());
 
     int32_t total_width = 4 * 46 + 3 * 18;
     int32_t start_x = (sheet_width - total_width) / 2;
@@ -1676,6 +2318,8 @@ static void create_footer(void)
 void waferlog_ui_create(void)
 {
     lv_obj_t * screen = lv_screen_active();
+    lv_obj_clear_flag(screen, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_scrollbar_mode(screen, LV_SCROLLBAR_MODE_OFF);
     display_width = lv_display_get_horizontal_resolution(lv_display_get_default());
     display_height = lv_display_get_vertical_resolution(lv_display_get_default());
     is_landscape = display_width > display_height;
