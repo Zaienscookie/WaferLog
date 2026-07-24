@@ -13,6 +13,7 @@ LV_FONT_DECLARE(waferlog_font_16);
 #define PORTRAIT_FOOTER_HEIGHT 56
 #define LANDSCAPE_HEADER_HEIGHT 58
 #define LANDSCAPE_FOOTER_HEIGHT 44
+#define NOTE_TEXT_CAPACITY 256
 
 #define COLOR_BACKGROUND 0xE9F8F6
 #define COLOR_WHITE 0xFFFFFF
@@ -33,7 +34,10 @@ static lv_obj_t * content_view;
 static lv_obj_t * status_label;
 static lv_obj_t * home_tab;
 static lv_obj_t * calendar_tab;
+static lv_obj_t * note_textarea;
 static bool is_landscape;
+static bool has_saved_note;
+static char saved_note[NOTE_TEXT_CAPACITY];
 
 static lv_color_t color(uint32_t rgb)
 {
@@ -88,6 +92,18 @@ static void render_note_editor(void);
 static void note_back_clicked_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
+    render_home();
+}
+
+static void note_save_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    if(note_textarea == NULL) {
+        return;
+    }
+
+    lv_strlcpy(saved_note, lv_textarea_get_text(note_textarea), sizeof(saved_note));
+    has_saved_note = saved_note[0] != '\0';
     render_home();
 }
 
@@ -244,7 +260,12 @@ static void render_portrait_home(void)
     lv_obj_set_pos(recent_title, 16, 294);
     text_style(recent_title, &waferlog_font_16, COLOR_INK);
 
-    add_note_card(content_view, 12, 320, 296, "还没有保存的笔记", "从快速入口开始创建第一条内容", COLOR_TEAL);
+    if(has_saved_note) {
+        add_note_card(content_view, 12, 320, 296, "本地笔记", "已保存到本地", COLOR_TEAL);
+    }
+    else {
+        add_note_card(content_view, 12, 320, 296, "还没有保存的笔记", "从快速入口开始创建第一条内容", COLOR_TEAL);
+    }
 }
 
 static void render_note_editor(void)
@@ -256,6 +277,23 @@ static void render_note_editor(void)
     lv_label_set_text(title, "新建笔记");
     lv_obj_set_pos(title, 16, 16);
     text_style(title, &waferlog_font_16, COLOR_INK);
+
+    note_textarea = lv_textarea_create(content_view);
+    lv_obj_set_pos(note_textarea, 12, 48);
+    lv_obj_set_size(note_textarea, 296, 180);
+    lv_obj_set_style_radius(note_textarea, 14, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(note_textarea, color(COLOR_WHITE), LV_PART_MAIN);
+    lv_obj_set_style_border_width(note_textarea, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(note_textarea, color(COLOR_BORDER), LV_PART_MAIN);
+    lv_obj_set_style_text_font(note_textarea, &waferlog_font_16, LV_PART_MAIN);
+    lv_obj_set_style_text_color(note_textarea, color(COLOR_INK), LV_PART_MAIN);
+    lv_obj_set_style_pad_all(note_textarea, 14, LV_PART_MAIN);
+    lv_textarea_set_placeholder_text(note_textarea, "把想法留下");
+    lv_textarea_set_max_length(note_textarea, 80);
+    if(has_saved_note) {
+        lv_textarea_set_text(note_textarea, saved_note);
+    }
+    lv_group_focus_obj(note_textarea);
 
     lv_obj_t * back_button = lv_button_create(content_view);
     lv_obj_set_pos(back_button, 12, 248);
@@ -270,6 +308,19 @@ static void render_note_editor(void)
     lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
     lv_obj_center(back_icon);
     text_style(back_icon, &lv_font_montserrat_16, COLOR_MUTED);
+
+    lv_obj_t * save_button = lv_button_create(content_view);
+    lv_obj_set_pos(save_button, 218, 248);
+    lv_obj_set_size(save_button, 90, 42);
+    lv_obj_set_style_radius(save_button, 14, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(save_button, color(COLOR_TEAL), LV_PART_MAIN);
+    lv_obj_set_style_border_width(save_button, 0, LV_PART_MAIN);
+    lv_obj_add_event_cb(save_button, note_save_clicked_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * save_label = lv_label_create(save_button);
+    lv_label_set_text(save_label, "保存");
+    lv_obj_center(save_label);
+    text_style(save_label, &waferlog_font_16, COLOR_WHITE);
     set_status("笔记编辑");
 }
 
@@ -299,6 +350,7 @@ static void render_landscape_home(void)
 static void render_home(void)
 {
     lv_obj_clean(content_view);
+    note_textarea = NULL;
     update_tabs(false);
     if(is_landscape) {
         render_landscape_home();
