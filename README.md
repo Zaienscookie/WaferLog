@@ -1,2 +1,5 @@
-# WaferLog
-WaferLog, 基于涂鸦 T5AI 开发板的嵌入式mini AI 记录终端, LVGL 图形界面, 手写交互,联动云端大模型实现笔记智能处理. #adventure2026
+# WaferLog 硅笺
+
+基于 TuyaT5AI 的嵌入式 mini AI 记录终端，使用 LVGL 构建图形界面，后续将加入手写交互与云端智能处理
+
+

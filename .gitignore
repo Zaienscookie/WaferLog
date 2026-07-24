@@ -1,0 +1,12 @@
+# Build output
+build/
+bin/
+
+# Local LVGL and SDL caches. CMake fetches LVGL in clean environments.
+lvgl/
+SDL2-2.30.1/
+
+# Local IDE and OS files
+.vscode/
+.idea/
+.DS_Store
