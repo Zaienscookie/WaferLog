@@ -158,7 +158,7 @@ static void add_action_card(
     lv_obj_t * detail_label = lv_label_create(card);
     lv_label_set_text(detail_label, detail);
     lv_obj_set_pos(detail_label, width - 64, 48);
-    text_style(detail_label, &lv_font_montserrat_12, COLOR_MUTED);
+    text_style(detail_label, &lv_font_source_han_sans_sc_14_cjk, COLOR_MUTED);
 }
 
 static void add_note_card(
@@ -188,7 +188,7 @@ static void add_note_card(
     lv_obj_t * summary_label = lv_label_create(card);
     lv_label_set_text(summary_label, summary);
     lv_obj_set_pos(summary_label, 28, 34);
-    text_style(summary_label, &lv_font_montserrat_12, COLOR_MUTED);
+    text_style(summary_label, &lv_font_source_han_sans_sc_14_cjk, COLOR_MUTED);
 }
 
 static void render_portrait_home(void)
@@ -201,7 +201,7 @@ static void render_portrait_home(void)
     lv_obj_t * heading_detail = lv_label_create(content_view);
     lv_label_set_text(heading_detail, "把想法留下，再决定如何处理");
     lv_obj_set_pos(heading_detail, 16, 37);
-    text_style(heading_detail, &lv_font_montserrat_12, COLOR_MUTED);
+    text_style(heading_detail, &lv_font_source_han_sans_sc_14_cjk, COLOR_MUTED);
 
     lv_obj_t * capture_card = make_card(content_view, 12, 66, 296, 88, COLOR_DARK, COLOR_DARK);
     lv_obj_t * capture_title = lv_label_create(capture_card);
@@ -212,7 +212,7 @@ static void render_portrait_home(void)
     lv_obj_t * capture_detail = lv_label_create(capture_card);
     lv_label_set_text(capture_detail, "文字、语音、图片都可以先保存");
     lv_obj_set_pos(capture_detail, 16, 42);
-    text_style(capture_detail, &lv_font_montserrat_12, 0xB9E5E2);
+    text_style(capture_detail, &lv_font_source_han_sans_sc_14_cjk, 0xB9E5E2);
 
     lv_obj_t * new_button = lv_button_create(capture_card);
     lv_obj_set_pos(new_button, 214, 27);
@@ -232,7 +232,7 @@ static void render_portrait_home(void)
     text_style(quick_title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
 
     add_action_card(content_view, 12, 198, 94, "笔记", "文字", LV_SYMBOL_EDIT, COLOR_TEAL_PALE, 1);
-    add_action_card(content_view, 113, 198, 94, "录音", "声音", LV_SYMBOL_AUDIO, COLOR_YELLOW_PALE, 2);
+    add_action_card(content_view, 113, 198, 94, "录音", "声音", "REC", COLOR_YELLOW_PALE, 2);
     add_action_card(content_view, 214, 198, 94, "导入", "文件", LV_SYMBOL_UPLOAD, COLOR_BLUE_PALE, 3);
 
     lv_obj_t * recent_title = lv_label_create(content_view);
@@ -246,7 +246,7 @@ static void render_portrait_home(void)
 static void render_landscape_home(void)
 {
     lv_obj_t * title = lv_label_create(content_view);
-    lv_label_set_text(title, "我的口袋本");
+    lv_label_set_text(title, "WaferLog 工作台");
     lv_obj_set_pos(title, 16, 14);
     text_style(title, &lv_font_source_han_sans_sc_16_cjk, COLOR_INK);
 
@@ -276,7 +276,7 @@ static void render_home(void)
     else {
         render_portrait_home();
     }
-    set_status("口袋本 · 本地模式");
+    set_status("WaferLog · 本地模式");
 }
 
 static int days_in_month(int year, int month)
@@ -311,7 +311,7 @@ static void render_calendar(void)
         lv_obj_t * message_detail = lv_label_create(message);
         lv_label_set_text(message_detail, "横屏启动模拟器查看日历视图");
         lv_obj_set_pos(message_detail, 24, 60);
-        text_style(message_detail, &lv_font_montserrat_12, COLOR_MUTED);
+        text_style(message_detail, &lv_font_source_han_sans_sc_14_cjk, COLOR_MUTED);
 
         lv_obj_t * command = lv_label_create(message);
         lv_label_set_text(command, "waferlog.exe --landscape");
@@ -342,7 +342,7 @@ static void render_calendar(void)
     lv_obj_t * event = lv_label_create(date_card);
     lv_label_set_text(event, "20:00  AI 回顾");
     lv_obj_set_pos(event, 16, 140);
-    text_style(event, &lv_font_montserrat_12, COLOR_WHITE);
+    text_style(event, &lv_font_source_han_sans_sc_14_cjk, COLOR_WHITE);
 
     lv_obj_t * calendar = make_card(content_view, 136, 12, 332, 194, COLOR_WHITE, COLOR_BORDER);
     static const char * weekdays[] = {"MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"};
@@ -491,7 +491,7 @@ void waferlog_ui_create(void)
         static const char * navigation_icons[] = {
             LV_SYMBOL_HOME,
             LV_SYMBOL_EDIT,
-            LV_SYMBOL_AUDIO,
+            LV_SYMBOL_UPLOAD,
             LV_SYMBOL_LIST,
             LV_SYMBOL_SETTINGS
         };
