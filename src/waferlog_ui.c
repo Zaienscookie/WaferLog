@@ -13,8 +13,8 @@ LV_FONT_DECLARE(waferlog_font_16);
 #define PORTRAIT_FOOTER_HEIGHT 56
 #define LANDSCAPE_HEADER_HEIGHT 58
 #define LANDSCAPE_FOOTER_HEIGHT 44
-#define NOTE_CANVAS_WIDTH 296
-#define NOTE_CANVAS_HEIGHT 180
+#define NOTE_CANVAS_MAX_WIDTH 464
+#define NOTE_CANVAS_MAX_HEIGHT 376
 
 #define COLOR_BACKGROUND 0xE9F8F6
 #define COLOR_WHITE 0xFFFFFF
@@ -36,8 +36,27 @@ static lv_obj_t * status_label;
 static lv_obj_t * home_tab;
 static lv_obj_t * calendar_tab;
 static lv_obj_t * note_canvas;
+static lv_obj_t * main_header;
+static lv_obj_t * main_footer;
 static bool is_landscape;
 static bool has_handwriting;
+static int32_t display_width;
+static int32_t display_height;
+static int32_t main_header_height;
+static int32_t main_footer_height;
+static int32_t note_canvas_width;
+static int32_t note_canvas_height;
+static int32_t brush_size = 5;
+static lv_point_t previous_note_point;
+static uint32_t previous_note_tick;
+static uint8_t note_canvas_buffer[
+    LV_CANVAS_BUF_SIZE(
+        NOTE_CANVAS_MAX_WIDTH,
+        NOTE_CANVAS_MAX_HEIGHT,
+        16,
+        LV_DRAW_BUF_STRIDE_ALIGN
+    )
+];
 
 static lv_color_t color(uint32_t rgb)
 {
@@ -89,6 +108,18 @@ static void render_home(void);
 static void render_calendar(void);
 static void render_note_editor(void);
 
+static void set_note_fullscreen(bool active)
+{
+    lv_obj_set_hidden(main_header, active);
+    lv_obj_set_hidden(main_footer, active);
+    lv_obj_set_pos(content_view, 0, active ? 0 : main_header_height);
+    lv_obj_set_size(
+        content_view,
+        display_width,
+        active ? display_height : display_height - main_header_height - main_footer_height
+    );
+}
+
 static void note_back_clicked_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
@@ -109,6 +140,11 @@ static void note_save_clicked_cb(lv_event_t * event)
     LV_UNUSED(event);
     has_handwriting = note_canvas != NULL && has_handwriting;
     render_home();
+}
+
+static void brush_size_changed_cb(lv_event_t * event)
+{
+    brush_size = lv_slider_get_value(lv_event_get_target_obj(event));
 }
 
 static void note_canvas_event_cb(lv_event_t * event)
@@ -135,29 +171,40 @@ static void note_canvas_event_cb(lv_event_t * event)
     point.y -= area.y1;
     if(point.x < 0) point.x = 0;
     if(point.y < 0) point.y = 0;
-    if(point.x >= NOTE_CANVAS_WIDTH) point.x = NOTE_CANVAS_WIDTH - 1;
-    if(point.y >= NOTE_CANVAS_HEIGHT) point.y = NOTE_CANVAS_HEIGHT - 1;
+    if(point.x >= note_canvas_width) point.x = note_canvas_width - 1;
+    if(point.y >= note_canvas_height) point.y = note_canvas_height - 1;
 
-    static lv_point_t previous;
     if(code == LV_EVENT_PRESSED) {
-        previous = point;
+        previous_note_point = point;
+        previous_note_tick = lv_tick_get();
     }
+
+    uint32_t elapsed = lv_tick_elaps(previous_note_tick);
+    int32_t distance = LV_ABS(point.x - previous_note_point.x) + LV_ABS(point.y - previous_note_point.y);
+    int32_t speed = elapsed > 0 ? distance * 10 / (int32_t)elapsed : distance * 10;
+    int32_t stroke_width = brush_size;
+    if(speed <= 2) stroke_width += 3;
+    else if(speed <= 5) stroke_width += 1;
+    else if(speed >= 12) stroke_width -= 1;
+    if(stroke_width < 1) stroke_width = 1;
+    if(stroke_width > 16) stroke_width = 16;
 
     lv_layer_t layer;
     lv_canvas_init_layer(note_canvas, &layer);
     lv_draw_line_dsc_t line;
     lv_draw_line_dsc_init(&line);
     line.color = color(COLOR_INK);
-    line.width = 4;
+    line.width = stroke_width;
     line.round_start = 1;
     line.round_end = 1;
-    line.p1.x = previous.x;
-    line.p1.y = previous.y;
+    line.p1.x = previous_note_point.x;
+    line.p1.y = previous_note_point.y;
     line.p2.x = point.x;
     line.p2.y = point.y;
     lv_draw_line(&layer, &line);
     lv_canvas_finish_layer(note_canvas, &layer);
-    previous = point;
+    previous_note_point = point;
+    previous_note_tick = lv_tick_get();
     has_handwriting = true;
 }
 
@@ -324,6 +371,7 @@ static void render_portrait_home(void)
 
 static void render_note_editor(void)
 {
+    set_note_fullscreen(true);
     lv_obj_clean(content_view);
     update_tabs(false);
 
@@ -332,19 +380,25 @@ static void render_note_editor(void)
     lv_obj_set_pos(title, 16, 16);
     text_style(title, &waferlog_font_16, COLOR_INK);
 
-    LV_DRAW_BUF_DEFINE_STATIC(note_draw_buf, NOTE_CANVAS_WIDTH, NOTE_CANVAS_HEIGHT, LV_COLOR_FORMAT_RGB565);
-    LV_DRAW_BUF_INIT_STATIC(note_draw_buf);
+    note_canvas_width = display_width - 16;
+    note_canvas_height = display_height - 104;
     note_canvas = lv_canvas_create(content_view);
-    lv_canvas_set_draw_buf(note_canvas, &note_draw_buf);
+    lv_canvas_set_buffer(
+        note_canvas,
+        note_canvas_buffer,
+        note_canvas_width,
+        note_canvas_height,
+        LV_COLOR_FORMAT_RGB565
+    );
     if(!has_handwriting) {
-    lv_canvas_fill_bg(note_canvas, lv_color_white(), LV_OPA_COVER);
+        lv_canvas_fill_bg(note_canvas, color(COLOR_WHITE), LV_OPA_COVER);
     }
-    lv_obj_set_pos(note_canvas, 12, 48);
+    lv_obj_set_pos(note_canvas, 8, 42);
     lv_obj_set_clickable(note_canvas, true);
     lv_obj_add_event_cb(note_canvas, note_canvas_event_cb, LV_EVENT_ALL, NULL);
 
     lv_obj_t * back_button = lv_button_create(content_view);
-    lv_obj_set_pos(back_button, 12, 248);
+    lv_obj_set_pos(back_button, 8, display_height - 54);
     lv_obj_set_size(back_button, 52, 42);
     lv_obj_set_style_radius(back_button, 14, LV_PART_MAIN);
     lv_obj_set_style_bg_color(back_button, color(COLOR_WHITE), LV_PART_MAIN);
@@ -358,7 +412,7 @@ static void render_note_editor(void)
     text_style(back_icon, &lv_font_montserrat_16, COLOR_MUTED);
 
     lv_obj_t * clear_button = lv_button_create(content_view);
-    lv_obj_set_pos(clear_button, 82, 248);
+    lv_obj_set_pos(clear_button, 68, display_height - 54);
     lv_obj_set_size(clear_button, 52, 42);
     lv_obj_set_style_radius(clear_button, 14, LV_PART_MAIN);
     lv_obj_set_style_bg_color(clear_button, color(COLOR_WHITE), LV_PART_MAIN);
@@ -371,9 +425,21 @@ static void render_note_editor(void)
     lv_obj_center(clear_icon);
     text_style(clear_icon, &lv_font_montserrat_16, COLOR_MUTED);
 
+    lv_obj_t * size_label = lv_label_create(content_view);
+    lv_label_set_text(size_label, "SIZE");
+    lv_obj_set_pos(size_label, 132, display_height - 44);
+    text_style(size_label, &lv_font_montserrat_12, COLOR_MUTED);
+
+    lv_obj_t * size_slider = lv_slider_create(content_view);
+    lv_obj_set_pos(size_slider, 168, display_height - 45);
+    lv_obj_set_size(size_slider, 92, 14);
+    lv_slider_set_range(size_slider, 2, 12);
+    lv_slider_set_value(size_slider, brush_size, LV_ANIM_OFF);
+    lv_obj_add_event_cb(size_slider, brush_size_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
+
     lv_obj_t * save_button = lv_button_create(content_view);
-    lv_obj_set_pos(save_button, 218, 248);
-    lv_obj_set_size(save_button, 90, 42);
+    lv_obj_set_pos(save_button, display_width - 82, display_height - 54);
+    lv_obj_set_size(save_button, 74, 42);
     lv_obj_set_style_radius(save_button, 14, LV_PART_MAIN);
     lv_obj_set_style_bg_color(save_button, color(COLOR_TEAL), LV_PART_MAIN);
     lv_obj_set_style_border_width(save_button, 0, LV_PART_MAIN);
@@ -411,6 +477,7 @@ static void render_landscape_home(void)
 
 static void render_home(void)
 {
+    set_note_fullscreen(false);
     lv_obj_clean(content_view);
     note_canvas = NULL;
     update_tabs(false);
@@ -434,6 +501,7 @@ static int days_in_month(int year, int month)
 
 static void render_calendar(void)
 {
+    set_note_fullscreen(false);
     lv_obj_clean(content_view);
     update_tabs(true);
 
@@ -532,36 +600,36 @@ static void render_calendar(void)
 void waferlog_ui_create(void)
 {
     lv_obj_t * screen = lv_screen_active();
-    int32_t screen_width = lv_display_get_horizontal_resolution(lv_display_get_default());
-    int32_t screen_height = lv_display_get_vertical_resolution(lv_display_get_default());
-    is_landscape = screen_width > screen_height;
-    int32_t header_height = is_landscape ? LANDSCAPE_HEADER_HEIGHT : PORTRAIT_HEADER_HEIGHT;
-    int32_t footer_height = is_landscape ? LANDSCAPE_FOOTER_HEIGHT : PORTRAIT_FOOTER_HEIGHT;
+    display_width = lv_display_get_horizontal_resolution(lv_display_get_default());
+    display_height = lv_display_get_vertical_resolution(lv_display_get_default());
+    is_landscape = display_width > display_height;
+    main_header_height = is_landscape ? LANDSCAPE_HEADER_HEIGHT : PORTRAIT_HEADER_HEIGHT;
+    main_footer_height = is_landscape ? LANDSCAPE_FOOTER_HEIGHT : PORTRAIT_FOOTER_HEIGHT;
     home_tab = NULL;
     calendar_tab = NULL;
 
     lv_obj_set_style_bg_color(screen, color(COLOR_BACKGROUND), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
 
-    lv_obj_t * header = lv_obj_create(screen);
-    lv_obj_remove_style_all(header);
-    lv_obj_set_size(header, screen_width, header_height);
-    lv_obj_set_style_bg_color(header, color(COLOR_WHITE), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(header, LV_OPA_COVER, LV_PART_MAIN);
+    main_header = lv_obj_create(screen);
+    lv_obj_remove_style_all(main_header);
+    lv_obj_set_size(main_header, display_width, main_header_height);
+    lv_obj_set_style_bg_color(main_header, color(COLOR_WHITE), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(main_header, LV_OPA_COVER, LV_PART_MAIN);
 
-    lv_obj_t * title = lv_label_create(header);
+    lv_obj_t * title = lv_label_create(main_header);
     lv_label_set_text(title, "WaferLog");
     lv_obj_set_pos(title, 16, is_landscape ? 9 : 12);
     text_style(title, &lv_font_montserrat_20, COLOR_INK);
 
-    lv_obj_t * brand = lv_label_create(header);
+    lv_obj_t * brand = lv_label_create(main_header);
     lv_label_set_text(brand, is_landscape ? "硅笺" : "硅笺 · 本地工作区");
     lv_obj_set_pos(brand, 16, is_landscape ? 34 : 40);
     text_style(brand, &waferlog_font_16, COLOR_TEAL);
 
     if(is_landscape) {
-        home_tab = lv_button_create(header);
-        lv_obj_set_pos(home_tab, screen_width - 146, 10);
+        home_tab = lv_button_create(main_header);
+        lv_obj_set_pos(home_tab, display_width - 146, 10);
         lv_obj_set_size(home_tab, 60, 34);
         lv_obj_set_style_radius(home_tab, 17, LV_PART_MAIN);
         lv_obj_set_style_border_width(home_tab, 0, LV_PART_MAIN);
@@ -571,8 +639,8 @@ void waferlog_ui_create(void)
         lv_obj_center(home_label);
         text_style(home_label, &waferlog_font_16, COLOR_MUTED);
 
-        calendar_tab = lv_button_create(header);
-        lv_obj_set_pos(calendar_tab, screen_width - 78, 10);
+        calendar_tab = lv_button_create(main_header);
+        lv_obj_set_pos(calendar_tab, display_width - 78, 10);
         lv_obj_set_size(calendar_tab, 62, 34);
         lv_obj_set_style_radius(calendar_tab, 17, LV_PART_MAIN);
         lv_obj_set_style_border_width(calendar_tab, 0, LV_PART_MAIN);
@@ -583,9 +651,9 @@ void waferlog_ui_create(void)
         text_style(calendar_label, &waferlog_font_16, COLOR_MUTED);
     }
     else {
-        lv_obj_t * local_badge = lv_obj_create(header);
+        lv_obj_t * local_badge = lv_obj_create(main_header);
         lv_obj_remove_style_all(local_badge);
-        lv_obj_set_pos(local_badge, screen_width - 72, 20);
+        lv_obj_set_pos(local_badge, display_width - 72, 20);
         lv_obj_set_size(local_badge, 56, 30);
         lv_obj_set_style_radius(local_badge, 15, LV_PART_MAIN);
         lv_obj_set_style_bg_color(local_badge, color(COLOR_TEAL_PALE), LV_PART_MAIN);
@@ -597,38 +665,38 @@ void waferlog_ui_create(void)
 
     content_view = lv_obj_create(screen);
     lv_obj_remove_style_all(content_view);
-    lv_obj_set_pos(content_view, 0, header_height);
-    lv_obj_set_size(content_view, screen_width, screen_height - header_height - footer_height);
+    lv_obj_set_pos(content_view, 0, main_header_height);
+    lv_obj_set_size(content_view, display_width, display_height - main_header_height - main_footer_height);
     lv_obj_set_style_bg_color(content_view, color(COLOR_BACKGROUND), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(content_view, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_scrollbar_mode(content_view, LV_SCROLLBAR_MODE_OFF);
 
-    lv_obj_t * footer = lv_obj_create(screen);
-    lv_obj_remove_style_all(footer);
-    lv_obj_set_pos(footer, 0, screen_height - footer_height);
-    lv_obj_set_size(footer, screen_width, footer_height);
-    lv_obj_set_style_bg_color(footer, color(is_landscape ? COLOR_DARK : COLOR_BACKGROUND), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(footer, LV_OPA_COVER, LV_PART_MAIN);
+    main_footer = lv_obj_create(screen);
+    lv_obj_remove_style_all(main_footer);
+    lv_obj_set_pos(main_footer, 0, display_height - main_footer_height);
+    lv_obj_set_size(main_footer, display_width, main_footer_height);
+    lv_obj_set_style_bg_color(main_footer, color(is_landscape ? COLOR_DARK : COLOR_BACKGROUND), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(main_footer, LV_OPA_COVER, LV_PART_MAIN);
 
     if(is_landscape) {
-        status_label = lv_label_create(footer);
+        status_label = lv_label_create(main_footer);
         lv_label_set_text(status_label, "WaferLog · 本地模式");
         lv_obj_set_pos(status_label, 16, 13);
         text_style(status_label, &waferlog_font_16, COLOR_WHITE);
 
-        lv_obj_t * status_right = lv_label_create(footer);
+        lv_obj_t * status_right = lv_label_create(main_footer);
         lv_label_set_text(status_right, "SYNC OFFLINE");
-        lv_obj_set_pos(status_right, screen_width - 106, 16);
+        lv_obj_set_pos(status_right, display_width - 106, 16);
         text_style(status_right, &lv_font_montserrat_12, 0xB9E5E2);
     }
     else {
-        status_label = lv_label_create(footer);
+        status_label = lv_label_create(main_footer);
         lv_obj_add_flag(status_label, LV_OBJ_FLAG_HIDDEN);
 
-        lv_obj_t * navigation = lv_obj_create(footer);
+        lv_obj_t * navigation = lv_obj_create(main_footer);
         lv_obj_remove_style_all(navigation);
         lv_obj_set_pos(navigation, 12, 4);
-        lv_obj_set_size(navigation, screen_width - 24, 48);
+        lv_obj_set_size(navigation, display_width - 24, 48);
         lv_obj_set_style_radius(navigation, 18, LV_PART_MAIN);
         lv_obj_set_style_bg_color(navigation, color(COLOR_DARK), LV_PART_MAIN);
 
