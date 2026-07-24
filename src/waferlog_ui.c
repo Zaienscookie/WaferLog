@@ -139,7 +139,6 @@ static void add_action_card(
     int32_t y,
     int32_t width,
     const char * title,
-    const char * detail,
     const char * symbol,
     uint32_t background,
     uintptr_t action
@@ -157,11 +156,6 @@ static void add_action_card(
     lv_label_set_text(title_label, title);
     lv_obj_set_pos(title_label, 14, 39);
     text_style(title_label, &waferlog_font_16, COLOR_INK);
-
-    lv_obj_t * detail_label = lv_label_create(card);
-    lv_label_set_text(detail_label, detail);
-    lv_obj_set_pos(detail_label, width - 64, 48);
-    text_style(detail_label, &waferlog_font_14, COLOR_MUTED);
 }
 
 static void add_note_card(
@@ -234,9 +228,9 @@ static void render_portrait_home(void)
     lv_obj_set_pos(quick_title, 16, 171);
     text_style(quick_title, &waferlog_font_16, COLOR_INK);
 
-    add_action_card(content_view, 12, 198, 94, "笔记", "文字", LV_SYMBOL_EDIT, COLOR_TEAL_PALE, 1);
-    add_action_card(content_view, 113, 198, 94, "录音", "声音", "REC", COLOR_YELLOW_PALE, 2);
-    add_action_card(content_view, 214, 198, 94, "导入", "文件", LV_SYMBOL_UPLOAD, COLOR_BLUE_PALE, 3);
+    add_action_card(content_view, 12, 198, 94, "笔记", LV_SYMBOL_EDIT, COLOR_TEAL_PALE, 1);
+    add_action_card(content_view, 113, 198, 94, "录音", "REC", COLOR_YELLOW_PALE, 2);
+    add_action_card(content_view, 214, 198, 94, "导入", LV_SYMBOL_UPLOAD, COLOR_BLUE_PALE, 3);
 
     lv_obj_t * recent_title = lv_label_create(content_view);
     lv_label_set_text(recent_title, "最近内容");
@@ -258,8 +252,8 @@ static void render_landscape_home(void)
     lv_label_set_text(left_title, "快速记录");
     lv_obj_set_pos(left_title, 16, 12);
     text_style(left_title, &waferlog_font_16, COLOR_INK);
-    add_action_card(left, 12, 44, 66, "笔记", "", "+", COLOR_TEAL_PALE, 1);
-    add_action_card(left, 88, 44, 66, "录音", "", "MIC", COLOR_YELLOW_PALE, 2);
+    add_action_card(left, 12, 44, 66, "笔记", "+", COLOR_TEAL_PALE, 1);
+    add_action_card(left, 88, 44, 66, "录音", "MIC", COLOR_YELLOW_PALE, 2);
 
     lv_obj_t * right_title = lv_label_create(content_view);
     lv_label_set_text(right_title, "最近更新");
