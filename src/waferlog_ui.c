@@ -2,6 +2,8 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <string.h>
 #include <time.h>
 
 #include "lvgl/lvgl.h"
@@ -10,44 +12,92 @@
 LV_FONT_DECLARE(waferlog_font_14);
 LV_FONT_DECLARE(waferlog_font_16);
 
-#define PORTRAIT_HEADER_HEIGHT 72
-#define PORTRAIT_FOOTER_HEIGHT 56
-#define LANDSCAPE_HEADER_HEIGHT 58
-#define LANDSCAPE_FOOTER_HEIGHT 44
-#define NOTE_CANVAS_MAX_WIDTH 464
-#define NOTE_CANVAS_MAX_HEIGHT 376
+#define HEADER_HEIGHT 58
+#define FOOTER_HEIGHT 64
+#define LANDSCAPE_FOOTER_HEIGHT 52
+#define NOTE_PAGE_COUNT 12
+#define NOTE_STROKE_LIMIT 768
+#define NOTE_CANVAS_MAX_WIDTH 640
+#define NOTE_CANVAS_MAX_HEIGHT 464
 
-#define COLOR_BACKGROUND 0xE9F8F6
-#define COLOR_WHITE 0xFFFFFF
-#define COLOR_INK 0x202A33
-#define COLOR_MUTED 0x6F7C84
-#define COLOR_TEAL 0x27B6B1
-#define COLOR_TEAL_PALE 0xD5F3EF
-#define COLOR_BLUE 0x55B8E8
-#define COLOR_BLUE_PALE 0xDDF3FC
-#define COLOR_YELLOW 0xF2B84B
-#define COLOR_YELLOW_PALE 0xFFF0C7
-#define COLOR_PINK 0xF08FA7
-#define COLOR_PINK_PALE 0xFCE2EA
-#define COLOR_BORDER 0xD5E9E7
-#define COLOR_DARK 0x173B48
+typedef enum {
+    PAGE_NOTES,
+    PAGE_CALENDAR,
+    PAGE_HOME
+} app_page_t;
 
+typedef enum {
+    PAPER_BLANK,
+    PAPER_RULED,
+    PAPER_GRID,
+    PAPER_DOTS
+} paper_style_t;
+
+typedef struct {
+    int16_t x1;
+    int16_t y1;
+    int16_t x2;
+    int16_t y2;
+    uint8_t width;
+    uint8_t color_index;
+} note_stroke_t;
+
+typedef struct {
+    note_stroke_t strokes[NOTE_STROKE_LIMIT];
+    uint16_t stroke_count;
+    uint8_t paper;
+} note_page_t;
+
+typedef struct {
+    uint32_t accent;
+    uint32_t accent_soft;
+    uint32_t quick;
+    uint32_t media;
+} accent_theme_t;
+
+static const accent_theme_t accent_themes[] = {
+    {0x00B58F, 0xDDF8F1, 0xAEE3EA, 0xF03D9E},
+    {0x6757E8, 0xE9E5FF, 0xC8D6FF, 0xF03D9E},
+    {0xF5A616, 0xFFF0CE, 0xAEE3EA, 0xEC4C8B},
+    {0xE7438B, 0xFCE3EF, 0xBCE8EB, 0xFF7A32}
+};
+
+static const uint32_t ink_colors[] = {
+    0x18202A,
+    0x1E73B7,
+    0xD7433C,
+    0x1C9B68
+};
+
+static lv_obj_t * app_root;
 static lv_obj_t * content_view;
-static lv_obj_t * status_label;
-static lv_obj_t * home_tab;
-static lv_obj_t * calendar_tab;
+static lv_obj_t * header_clock_label;
+static lv_obj_t * language_label;
+static lv_obj_t * nav_buttons[3];
 static lv_obj_t * note_canvas;
-static lv_obj_t * main_header;
-static lv_obj_t * main_footer;
+static lv_obj_t * toast_label;
+static lv_timer_t * clock_timer;
+static lv_timer_t * toast_timer;
+static app_page_t current_page = PAGE_HOME;
+static note_page_t note_pages[NOTE_PAGE_COUNT];
+static uint8_t note_page_index;
+static uint8_t note_color_index;
+static int32_t brush_size = 3;
+static bool eraser_enabled;
+static bool note_tools_open = true;
+static bool note_focus_mode;
+static bool note_saved;
+static bool note_uploaded;
+static bool note_data_initialized;
+static bool dark_mode;
+static uint8_t theme_index = 1;
+static uint8_t language_index;
 static bool is_landscape;
-static bool has_handwriting;
 static int32_t display_width;
 static int32_t display_height;
-static int32_t main_header_height;
-static int32_t main_footer_height;
+static int32_t footer_height;
 static int32_t note_canvas_width;
 static int32_t note_canvas_height;
-static int32_t brush_size = 5;
 static lv_point_t previous_note_point;
 static uint32_t previous_note_tick;
 static uint8_t note_canvas_buffer[
@@ -59,109 +109,389 @@ static uint8_t note_canvas_buffer[
     )
 ];
 
+static void render_current_page(void);
+static void render_note_page(void);
+static void render_calendar_page(void);
+static void render_home_page(void);
+static void show_language_overlay(void);
+static void show_appearance_overlay(void);
+
 static lv_color_t color(uint32_t rgb)
 {
     return lv_color_hex(rgb);
+}
+
+static uint32_t theme_bg(void)
+{
+    return dark_mode ? 0x111318 : 0xF7F7FB;
+}
+
+static uint32_t theme_surface(void)
+{
+    return dark_mode ? 0x1D2128 : 0xFFFFFF;
+}
+
+static uint32_t theme_text(void)
+{
+    return dark_mode ? 0xF6F7F8 : 0x121318;
+}
+
+static uint32_t theme_muted(void)
+{
+    return dark_mode ? 0xA8AFBA : 0x777984;
+}
+
+static uint32_t theme_border(void)
+{
+    return dark_mode ? 0x363B44 : 0xE5E4EA;
+}
+
+static uint32_t theme_accent(void)
+{
+    return accent_themes[theme_index].accent;
+}
+
+static uint32_t theme_accent_soft(void)
+{
+    return dark_mode ? 0x343044 : accent_themes[theme_index].accent_soft;
 }
 
 static void text_style(lv_obj_t * object, const lv_font_t * font, uint32_t rgb)
 {
     lv_obj_set_style_text_font(object, font, LV_PART_MAIN);
     lv_obj_set_style_text_color(object, color(rgb), LV_PART_MAIN);
+    lv_obj_set_style_text_letter_space(object, 0, LV_PART_MAIN);
 }
 
-static void set_status(const char * message)
+static void flat_object(lv_obj_t * object)
 {
-    if(status_label != NULL) {
-        lv_label_set_text(status_label, message);
+    lv_obj_remove_style_all(object);
+    lv_obj_set_style_bg_opa(object, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(object, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(object, 0, LV_PART_MAIN);
+    lv_obj_set_scrollbar_mode(object, LV_SCROLLBAR_MODE_OFF);
+}
+
+static lv_obj_t * make_panel(
+    lv_obj_t * parent,
+    int32_t x,
+    int32_t y,
+    int32_t width,
+    int32_t height,
+    uint32_t background,
+    int32_t radius
+)
+{
+    lv_obj_t * panel = lv_obj_create(parent);
+    lv_obj_set_pos(panel, x, y);
+    lv_obj_set_size(panel, width, height);
+    lv_obj_set_style_bg_color(panel, color(background), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(panel, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(panel, radius, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(panel, 0, LV_PART_MAIN);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_OFF);
+    return panel;
+}
+
+static lv_obj_t * make_button(
+    lv_obj_t * parent,
+    int32_t x,
+    int32_t y,
+    int32_t width,
+    int32_t height,
+    const char * label,
+    uint32_t background,
+    uint32_t foreground,
+    int32_t radius,
+    const lv_font_t * font,
+    lv_event_cb_t callback,
+    uintptr_t user_data
+)
+{
+    lv_obj_t * button = lv_button_create(parent);
+    lv_obj_set_pos(button, x, y);
+    lv_obj_set_size(button, width, height);
+    lv_obj_set_style_bg_color(button, color(background), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(button, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_border_width(button, 0, LV_PART_MAIN);
+    lv_obj_set_style_radius(button, radius, LV_PART_MAIN);
+    lv_obj_set_style_shadow_width(button, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(button, 0, LV_PART_MAIN);
+    if(callback != NULL) {
+        lv_obj_add_event_cb(button, callback, LV_EVENT_CLICKED, (void *)user_data);
     }
+
+    lv_obj_t * text = lv_label_create(button);
+    lv_label_set_text(text, label);
+    lv_obj_center(text);
+    text_style(text, font, foreground);
+    return button;
 }
 
-static void update_tabs(bool calendar_active)
+static void toast_hide_cb(lv_timer_t * timer)
 {
-    if(home_tab == NULL || calendar_tab == NULL) {
+    LV_UNUSED(timer);
+    if(toast_label != NULL) {
+        lv_obj_add_flag(toast_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    toast_timer = NULL;
+}
+
+static void show_toast(const char * message)
+{
+    if(toast_label == NULL) {
+        return;
+    }
+    lv_label_set_text(toast_label, message);
+    lv_obj_remove_flag(toast_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(toast_label);
+    if(toast_timer != NULL) {
+        lv_timer_delete(toast_timer);
+    }
+    toast_timer = lv_timer_create(toast_hide_cb, 1800, NULL);
+    lv_timer_set_repeat_count(toast_timer, 1);
+}
+
+static void update_clock(void)
+{
+    if(header_clock_label == NULL) {
         return;
     }
 
-    lv_obj_set_style_bg_color(
-        home_tab,
-        color(calendar_active ? COLOR_WHITE : COLOR_TEAL),
-        LV_PART_MAIN
+    time_t now = time(NULL);
+    struct tm local_time;
+#ifdef _WIN32
+    localtime_s(&local_time, &now);
+#else
+    localtime_r(&now, &local_time);
+#endif
+    char text[32];
+    lv_snprintf(
+        text,
+        sizeof(text),
+        "%02d:%02d | %04d-%02d-%02d",
+        local_time.tm_hour,
+        local_time.tm_min,
+        local_time.tm_year + 1900,
+        local_time.tm_mon + 1,
+        local_time.tm_mday
     );
-    lv_obj_set_style_bg_color(
-        calendar_tab,
-        color(calendar_active ? COLOR_TEAL : COLOR_WHITE),
-        LV_PART_MAIN
-    );
-    lv_obj_set_style_text_color(
-        home_tab,
-        color(calendar_active ? COLOR_MUTED : COLOR_WHITE),
-        LV_PART_MAIN
-    );
-    lv_obj_set_style_text_color(
-        calendar_tab,
-        color(calendar_active ? COLOR_WHITE : COLOR_MUTED),
-        LV_PART_MAIN
-    );
+    lv_label_set_text(header_clock_label, text);
 }
 
-static void render_home(void);
-static void render_calendar(void);
-static void render_note_editor(void);
-static void render_settings(void);
-
-static void set_note_fullscreen(bool active)
+static void clock_timer_cb(lv_timer_t * timer)
 {
-    lv_obj_set_hidden(main_header, active);
-    lv_obj_set_hidden(main_footer, active);
-    lv_obj_set_pos(content_view, 0, active ? 0 : main_header_height);
-    lv_obj_set_size(
-        content_view,
-        display_width,
-        active ? display_height : display_height - main_header_height - main_footer_height
-    );
-}
-
-static void note_back_clicked_cb(lv_event_t * event)
-{
-    LV_UNUSED(event);
-    render_home();
-}
-
-static void note_clear_clicked_cb(lv_event_t * event)
-{
-    LV_UNUSED(event);
-    if(note_canvas != NULL) {
-        lv_canvas_fill_bg(note_canvas, lv_color_white(), LV_OPA_COVER);
-        has_handwriting = false;
+    LV_UNUSED(timer);
+    update_clock();
+    if(current_page == PAGE_CALENDAR) {
+        render_calendar_page();
     }
 }
 
-static void note_save_clicked_cb(lv_event_t * event)
+static bool any_handwriting(void)
+{
+    for(uint32_t i = 0; i < NOTE_PAGE_COUNT; i++) {
+        if(note_pages[i].stroke_count > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void navigation_update(void)
+{
+    for(uint32_t i = 0; i < 3; i++) {
+        if(nav_buttons[i] == NULL) {
+            continue;
+        }
+        bool active = current_page == (app_page_t)i;
+        lv_obj_set_style_bg_opa(
+            nav_buttons[i],
+            active ? LV_OPA_COVER : LV_OPA_TRANSP,
+            LV_PART_MAIN
+        );
+        lv_obj_set_style_bg_color(
+            nav_buttons[i],
+            color(0xFFFFFF),
+            LV_PART_MAIN
+        );
+        lv_obj_set_style_text_color(
+            nav_buttons[i],
+            color(active ? 0x111318 : 0x8E949D),
+            LV_PART_MAIN
+        );
+        lv_obj_t * label = lv_obj_get_child(nav_buttons[i], 0);
+        if(label != NULL) {
+            lv_obj_set_style_text_color(
+                label,
+                color(active ? 0x111318 : 0x8E949D),
+                LV_PART_MAIN
+            );
+        }
+    }
+}
+
+static void switch_page(app_page_t page)
+{
+    current_page = page;
+    note_focus_mode = false;
+    render_current_page();
+}
+
+static void nav_clicked_cb(lv_event_t * event)
+{
+    switch_page((app_page_t)(uintptr_t)lv_event_get_user_data(event));
+}
+
+static void home_start_clicked_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
-    has_handwriting = note_canvas != NULL && has_handwriting;
-    render_home();
+    switch_page(PAGE_NOTES);
 }
 
-static void brush_size_changed_cb(lv_event_t * event)
+static void wifi_clicked_cb(lv_event_t * event)
 {
-    brush_size = lv_slider_get_value(lv_event_get_target_obj(event));
+    LV_UNUSED(event);
+    if(waferlog_wifi_is_connected()) {
+        waferlog_wifi_disconnect();
+        show_toast("Wi-Fi disconnected");
+    }
+    else {
+        waferlog_wifi_connect("WaferLog Lab", "12345678");
+        show_toast("Wi-Fi connected");
+    }
+    render_home_page();
 }
 
-static void note_canvas_event_cb(lv_event_t * event)
+static void bluetooth_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    if(waferlog_ble_is_enabled()) {
+        waferlog_ble_disable();
+        show_toast("Bluetooth disabled");
+    }
+    else {
+        waferlog_ble_enable();
+        show_toast("Bluetooth enabled");
+    }
+    render_home_page();
+}
+
+static void recording_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    if(waferlog_recording_is_active()) {
+        waferlog_recording_stop();
+        show_toast("Recording stopped");
+    }
+    else if(waferlog_recording_start()) {
+        show_toast("Recording started");
+    }
+    render_home_page();
+}
+
+static void recent_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    switch_page(PAGE_NOTES);
+}
+
+static void note_draw_paper(void)
 {
     if(note_canvas == NULL) {
         return;
     }
 
+    lv_canvas_fill_bg(note_canvas, color(0xFFFFFF), LV_OPA_COVER);
+    uint8_t paper = note_pages[note_page_index].paper;
+    if(paper == PAPER_BLANK) {
+        return;
+    }
+
+    lv_layer_t layer;
+    lv_canvas_init_layer(note_canvas, &layer);
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.color = color(0xDCE7ED);
+    line.width = 1;
+
+    if(paper == PAPER_RULED || paper == PAPER_GRID) {
+        for(int32_t y = 36; y < note_canvas_height; y += 36) {
+            line.p1.x = 0;
+            line.p1.y = y;
+            line.p2.x = note_canvas_width - 1;
+            line.p2.y = y;
+            lv_draw_line(&layer, &line);
+        }
+    }
+    if(paper == PAPER_GRID) {
+        for(int32_t x = 36; x < note_canvas_width; x += 36) {
+            line.p1.x = x;
+            line.p1.y = 0;
+            line.p2.x = x;
+            line.p2.y = note_canvas_height - 1;
+            lv_draw_line(&layer, &line);
+        }
+    }
+    if(paper == PAPER_DOTS) {
+        for(int32_t y = 24; y < note_canvas_height; y += 24) {
+            for(int32_t x = 24; x < note_canvas_width; x += 24) {
+                line.p1.x = x;
+                line.p1.y = y;
+                line.p2.x = x + 1;
+                line.p2.y = y;
+                lv_draw_line(&layer, &line);
+            }
+        }
+    }
+    lv_canvas_finish_layer(note_canvas, &layer);
+}
+
+static void note_draw_stroke(const note_stroke_t * stroke)
+{
+    if(note_canvas == NULL || stroke == NULL) {
+        return;
+    }
+
+    lv_layer_t layer;
+    lv_canvas_init_layer(note_canvas, &layer);
+    lv_draw_line_dsc_t line;
+    lv_draw_line_dsc_init(&line);
+    line.color = color(
+        stroke->color_index == UINT8_MAX
+            ? 0xFFFFFF
+            : ink_colors[stroke->color_index % 4]
+    );
+    line.width = stroke->width;
+    line.round_start = 1;
+    line.round_end = 1;
+    line.p1.x = stroke->x1;
+    line.p1.y = stroke->y1;
+    line.p2.x = stroke->x2;
+    line.p2.y = stroke->y2;
+    lv_draw_line(&layer, &line);
+    lv_canvas_finish_layer(note_canvas, &layer);
+}
+
+static void note_redraw_canvas(void)
+{
+    note_draw_paper();
+    note_page_t * page = &note_pages[note_page_index];
+    for(uint32_t i = 0; i < page->stroke_count; i++) {
+        note_draw_stroke(&page->strokes[i]);
+    }
+}
+
+static void note_canvas_event_cb(lv_event_t * event)
+{
     lv_event_code_t code = lv_event_get_code(event);
     if(code != LV_EVENT_PRESSED && code != LV_EVENT_PRESSING) {
         return;
     }
 
     lv_indev_t * indev = lv_indev_active();
-    if(indev == NULL) {
+    if(indev == NULL || note_canvas == NULL) {
         return;
     }
 
@@ -171,10 +501,8 @@ static void note_canvas_event_cb(lv_event_t * event)
     lv_obj_get_coords(note_canvas, &area);
     point.x -= area.x1;
     point.y -= area.y1;
-    if(point.x < 0) point.x = 0;
-    if(point.y < 0) point.y = 0;
-    if(point.x >= note_canvas_width) point.x = note_canvas_width - 1;
-    if(point.y >= note_canvas_height) point.y = note_canvas_height - 1;
+    point.x = LV_CLAMP(0, point.x, note_canvas_width - 1);
+    point.y = LV_CLAMP(0, point.y, note_canvas_height - 1);
 
     if(code == LV_EVENT_PRESSED) {
         previous_note_point = point;
@@ -182,255 +510,297 @@ static void note_canvas_event_cb(lv_event_t * event)
     }
 
     uint32_t elapsed = lv_tick_elaps(previous_note_tick);
-    int32_t distance = LV_ABS(point.x - previous_note_point.x) + LV_ABS(point.y - previous_note_point.y);
+    int32_t distance =
+        LV_ABS(point.x - previous_note_point.x) +
+        LV_ABS(point.y - previous_note_point.y);
     int32_t speed = elapsed > 0 ? distance * 10 / (int32_t)elapsed : distance * 10;
-    int32_t stroke_width = brush_size;
-    if(speed <= 2) stroke_width += 3;
-    else if(speed <= 5) stroke_width += 1;
-    else if(speed >= 12) stroke_width -= 1;
-    if(stroke_width < 1) stroke_width = 1;
-    if(stroke_width > 16) stroke_width = 16;
+    int32_t stroke_width = eraser_enabled ? brush_size + 7 : brush_size;
+    if(!eraser_enabled) {
+        if(speed <= 2) stroke_width += 3;
+        else if(speed <= 5) stroke_width += 1;
+        else if(speed >= 12) stroke_width -= 1;
+    }
+    stroke_width = LV_CLAMP(1, stroke_width, 18);
 
-    lv_layer_t layer;
-    lv_canvas_init_layer(note_canvas, &layer);
-    lv_draw_line_dsc_t line;
-    lv_draw_line_dsc_init(&line);
-    line.color = color(COLOR_INK);
-    line.width = stroke_width;
-    line.round_start = 1;
-    line.round_end = 1;
-    line.p1.x = previous_note_point.x;
-    line.p1.y = previous_note_point.y;
-    line.p2.x = point.x;
-    line.p2.y = point.y;
-    lv_draw_line(&layer, &line);
-    lv_canvas_finish_layer(note_canvas, &layer);
+    note_page_t * page = &note_pages[note_page_index];
+    if(page->stroke_count >= NOTE_STROKE_LIMIT) {
+        show_toast("This page is full");
+        return;
+    }
+
+    note_stroke_t * stroke = &page->strokes[page->stroke_count++];
+    stroke->x1 = (int16_t)previous_note_point.x;
+    stroke->y1 = (int16_t)previous_note_point.y;
+    stroke->x2 = (int16_t)point.x;
+    stroke->y2 = (int16_t)point.y;
+    stroke->width = (uint8_t)stroke_width;
+    stroke->color_index = eraser_enabled ? UINT8_MAX : note_color_index;
+    note_draw_stroke(stroke);
+
     previous_note_point = point;
     previous_note_tick = lv_tick_get();
-    has_handwriting = true;
+    note_saved = false;
+    note_uploaded = false;
 }
 
-static void tab_clicked_cb(lv_event_t * event)
+static void note_page_clicked_cb(lv_event_t * event)
 {
-    uintptr_t target = (uintptr_t)lv_event_get_user_data(event);
-    if(target == 1U) {
-        render_home();
-    }
-    else {
-        render_calendar();
-    }
-}
-
-static void action_clicked_cb(lv_event_t * event)
-{
-    uintptr_t action = (uintptr_t)lv_event_get_user_data(event);
-    if(action == 1U) {
-        render_note_editor();
-    }
-    else if(action == 2U) {
-        if(waferlog_recording_is_active()) {
-            waferlog_recording_stop();
-            set_status("录音已停止");
-        }
-        else if(waferlog_recording_start()) {
-            set_status("录音模拟中");
-        }
-    }
-    else {
-        set_status("图片入口已准备");
+    int delta = (int)(intptr_t)lv_event_get_user_data(event);
+    int next = (int)note_page_index + delta;
+    if(next >= 0 && next < NOTE_PAGE_COUNT) {
+        note_page_index = (uint8_t)next;
+        render_note_page();
     }
 }
 
-static void service_button_clicked_cb(lv_event_t * event)
-{
-    uintptr_t action = (uintptr_t)lv_event_get_user_data(event);
-    if(action == 10U) {
-        if(waferlog_wifi_is_connected()) {
-            waferlog_wifi_disconnect();
-        }
-        else {
-            waferlog_wifi_connect("WaferLog-Demo", "12345678");
-        }
-        render_settings();
-    }
-    else if(action == 11U) {
-        if(waferlog_ble_is_enabled()) {
-            waferlog_ble_disable();
-        }
-        else {
-            waferlog_ble_enable();
-        }
-        render_settings();
-    }
-    else if(action == 12U) {
-        if(waferlog_recording_is_active()) {
-            waferlog_recording_stop();
-        }
-        else {
-            waferlog_recording_start();
-        }
-        render_settings();
-    }
-    else {
-        render_home();
-    }
-}
-
-static void settings_navigation_clicked_cb(lv_event_t * event)
+static void note_tools_clicked_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
-    render_settings();
+    note_tools_open = !note_tools_open;
+    render_note_page();
 }
 
-static lv_obj_t * make_card(
-    lv_obj_t * parent,
-    int32_t x,
-    int32_t y,
-    int32_t width,
-    int32_t height,
-    uint32_t background,
-    uint32_t border
-)
+static void note_focus_clicked_cb(lv_event_t * event)
 {
-    lv_obj_t * card = lv_button_create(parent);
-    lv_obj_set_pos(card, x, y);
-    lv_obj_set_size(card, width, height);
-    lv_obj_set_style_radius(card, 16, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(card, color(background), LV_PART_MAIN);
-    lv_obj_set_style_border_width(card, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(card, color(border), LV_PART_MAIN);
-    lv_obj_set_style_shadow_width(card, 8, LV_PART_MAIN);
-    lv_obj_set_style_shadow_opa(card, LV_OPA_10, LV_PART_MAIN);
-    lv_obj_set_style_shadow_color(card, color(COLOR_DARK), LV_PART_MAIN);
-    lv_obj_set_style_pad_all(card, 0, LV_PART_MAIN);
-    return card;
+    LV_UNUSED(event);
+    note_focus_mode = !note_focus_mode;
+    render_note_page();
 }
 
-static void add_action_card(
-    lv_obj_t * parent,
-    int32_t x,
-    int32_t y,
-    int32_t width,
-    const char * title,
-    const char * symbol,
-    uint32_t background,
-    uintptr_t action
-)
+static void note_save_clicked_cb(lv_event_t * event)
 {
-    lv_obj_t * card = make_card(parent, x, y, width, 76, background, COLOR_WHITE);
-    lv_obj_add_event_cb(card, action_clicked_cb, LV_EVENT_CLICKED, (void *)action);
-
-    lv_obj_t * symbol_label = lv_label_create(card);
-    lv_label_set_text(symbol_label, symbol);
-    lv_obj_set_pos(symbol_label, 14, 12);
-    text_style(symbol_label, &lv_font_montserrat_20, COLOR_INK);
-
-    lv_obj_t * title_label = lv_label_create(card);
-    lv_label_set_text(title_label, title);
-    lv_obj_set_pos(title_label, 14, 39);
-    text_style(title_label, &waferlog_font_16, COLOR_INK);
-}
-
-static void add_note_card(
-    lv_obj_t * parent,
-    int32_t x,
-    int32_t y,
-    int32_t width,
-    const char * title,
-    const char * summary,
-    uint32_t accent
-)
-{
-    lv_obj_t * card = make_card(parent, x, y, width, 58, COLOR_WHITE, COLOR_BORDER);
-
-    lv_obj_t * accent_bar = lv_obj_create(card);
-    lv_obj_remove_style_all(accent_bar);
-    lv_obj_set_pos(accent_bar, 12, 12);
-    lv_obj_set_size(accent_bar, 5, 34);
-    lv_obj_set_style_radius(accent_bar, 3, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(accent_bar, color(accent), LV_PART_MAIN);
-
-    lv_obj_t * title_label = lv_label_create(card);
-    lv_label_set_text(title_label, title);
-    lv_obj_set_pos(title_label, 28, 10);
-    text_style(title_label, &waferlog_font_16, COLOR_INK);
-
-    lv_obj_t * summary_label = lv_label_create(card);
-    lv_label_set_text(summary_label, summary);
-    lv_obj_set_pos(summary_label, 28, 34);
-    text_style(summary_label, &waferlog_font_14, COLOR_MUTED);
-}
-
-static void render_portrait_home(void)
-{
-    lv_obj_t * heading = lv_label_create(content_view);
-    lv_label_set_text(heading, "工作台");
-    lv_obj_set_pos(heading, 16, 12);
-    text_style(heading, &waferlog_font_16, COLOR_INK);
-
-    lv_obj_t * heading_detail = lv_label_create(content_view);
-    lv_label_set_text(heading_detail, "把想法留下，再决定如何处理");
-    lv_obj_set_pos(heading_detail, 16, 37);
-    text_style(heading_detail, &waferlog_font_14, COLOR_MUTED);
-
-    lv_obj_t * capture_card = make_card(content_view, 12, 66, 296, 88, COLOR_DARK, COLOR_DARK);
-    lv_obj_t * capture_title = lv_label_create(capture_card);
-    lv_label_set_text(capture_title, "记录一条新内容");
-    lv_obj_set_pos(capture_title, 16, 14);
-    text_style(capture_title, &waferlog_font_16, COLOR_WHITE);
-
-    lv_obj_t * capture_detail = lv_label_create(capture_card);
-    lv_label_set_text(capture_detail, "文字、语音、图片都可以先保存");
-    lv_obj_set_pos(capture_detail, 16, 42);
-    text_style(capture_detail, &waferlog_font_14, 0xB9E5E2);
-
-    lv_obj_t * new_button = lv_button_create(capture_card);
-    lv_obj_set_pos(new_button, 214, 27);
-    lv_obj_set_size(new_button, 66, 34);
-    lv_obj_set_style_radius(new_button, 17, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(new_button, color(COLOR_TEAL), LV_PART_MAIN);
-    lv_obj_set_style_border_width(new_button, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(new_button, action_clicked_cb, LV_EVENT_CLICKED, (void *)1U);
-    lv_obj_t * new_label = lv_label_create(new_button);
-    lv_label_set_text(new_label, "新建");
-    lv_obj_center(new_label);
-    text_style(new_label, &waferlog_font_16, COLOR_WHITE);
-
-    lv_obj_t * quick_title = lv_label_create(content_view);
-    lv_label_set_text(quick_title, "快速入口");
-    lv_obj_set_pos(quick_title, 16, 171);
-    text_style(quick_title, &waferlog_font_16, COLOR_INK);
-
-    add_action_card(content_view, 12, 198, 94, "笔记", LV_SYMBOL_EDIT, COLOR_TEAL_PALE, 1);
-    add_action_card(content_view, 113, 198, 94, "录音", "REC", COLOR_YELLOW_PALE, 2);
-    add_action_card(content_view, 214, 198, 94, "导入", LV_SYMBOL_UPLOAD, COLOR_BLUE_PALE, 3);
-
-    lv_obj_t * recent_title = lv_label_create(content_view);
-    lv_label_set_text(recent_title, "最近内容");
-    lv_obj_set_pos(recent_title, 16, 294);
-    text_style(recent_title, &waferlog_font_16, COLOR_INK);
-
-    if(has_handwriting) {
-        add_note_card(content_view, 12, 320, 296, "本地笔记", "已保存到本地", COLOR_TEAL);
+    LV_UNUSED(event);
+    if(!any_handwriting()) {
+        show_toast("Nothing to save");
+        return;
     }
-    else {
-        add_note_card(content_view, 12, 320, 296, "还没有保存的笔记", "从快速入口开始创建第一条内容", COLOR_TEAL);
+    note_saved = true;
+    note_uploaded = false;
+    show_toast("Saved locally");
+    render_note_page();
+}
+
+static void note_upload_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    if(!any_handwriting()) {
+        show_toast("Nothing to upload");
+        return;
+    }
+    if(!waferlog_wifi_is_connected()) {
+        show_toast("Connect Wi-Fi first");
+        return;
+    }
+    if(waferlog_note_upload()) {
+        note_saved = true;
+        note_uploaded = true;
+        show_toast("Upload complete");
+        render_note_page();
     }
 }
 
-static void render_note_editor(void)
+static void note_paper_changed_cb(lv_event_t * event)
 {
-    set_note_fullscreen(true);
+    note_pages[note_page_index].paper =
+        (uint8_t)lv_dropdown_get_selected(lv_event_get_target_obj(event));
+    note_saved = false;
+    note_uploaded = false;
+    note_redraw_canvas();
+}
+
+static void note_color_clicked_cb(lv_event_t * event)
+{
+    note_color_index = (uint8_t)(uintptr_t)lv_event_get_user_data(event);
+    eraser_enabled = false;
+    render_note_page();
+}
+
+static void note_width_clicked_cb(lv_event_t * event)
+{
+    int delta = (int)(intptr_t)lv_event_get_user_data(event);
+    brush_size = LV_CLAMP(1, brush_size + delta, 12);
+    render_note_page();
+}
+
+static void note_eraser_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    eraser_enabled = !eraser_enabled;
+    render_note_page();
+}
+
+static void note_clear_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    note_pages[note_page_index].stroke_count = 0;
+    note_saved = false;
+    note_uploaded = false;
+    note_redraw_canvas();
+    show_toast("Page cleared");
+}
+
+static void render_note_page(void)
+{
     lv_obj_clean(content_view);
-    update_tabs(false);
+    note_canvas = NULL;
+    navigation_update();
 
-    lv_obj_t * title = lv_label_create(content_view);
-    lv_label_set_text(title, "新建笔记");
-    lv_obj_set_pos(title, 16, 16);
-    text_style(title, &waferlog_font_16, COLOR_INK);
+    int32_t content_height = lv_obj_get_height(content_view);
+    int32_t primary_height = note_focus_mode ? 0 : 54;
+    int32_t tools_height = note_focus_mode || !note_tools_open ? 0 : 44;
 
-    note_canvas_width = display_width - 16;
-    note_canvas_height = display_height - 104;
+    if(!note_focus_mode) {
+        lv_obj_t * primary = make_panel(
+            content_view, 0, 0, display_width, primary_height, theme_bg(), 0
+        );
+        lv_obj_t * title = lv_label_create(primary);
+        lv_label_set_text(title, "Notes");
+        lv_obj_set_pos(title, 10, 17);
+        text_style(title, &lv_font_montserrat_16, theme_text());
+
+        int32_t left_x = display_width - 248;
+        make_button(
+            primary, left_x, 8, 34, 38, LV_SYMBOL_LEFT,
+            theme_surface(), theme_text(), 10, &lv_font_montserrat_16,
+            note_page_clicked_cb, (uintptr_t)-1
+        );
+
+        char page_text[16];
+        lv_snprintf(
+            page_text,
+            sizeof(page_text),
+            "%u / %u",
+            note_page_index + 1U,
+            NOTE_PAGE_COUNT
+        );
+        lv_obj_t * page_label = lv_label_create(primary);
+        lv_label_set_text(page_label, page_text);
+        lv_obj_set_pos(page_label, left_x + 36, 17);
+        lv_obj_set_width(page_label, 42);
+        lv_obj_set_style_text_align(page_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        text_style(page_label, &lv_font_montserrat_16, theme_text());
+
+        make_button(
+            primary, left_x + 78, 8, 34, 38, LV_SYMBOL_RIGHT,
+            theme_surface(), theme_text(), 10, &lv_font_montserrat_16,
+            note_page_clicked_cb, 1U
+        );
+        make_button(
+            primary, display_width - 130, 8, 36, 38,
+            note_tools_open ? LV_SYMBOL_CLOSE : LV_SYMBOL_LIST,
+            theme_accent_soft(), theme_accent(), 10, &lv_font_montserrat_16,
+            note_tools_clicked_cb, 0U
+        );
+        make_button(
+            primary, display_width - 90, 8, 36, 38, LV_SYMBOL_SAVE,
+            note_saved ? theme_accent_soft() : theme_surface(),
+            note_saved ? theme_accent() : theme_text(),
+            10, &lv_font_montserrat_16, note_save_clicked_cb, 0U
+        );
+        make_button(
+            primary, display_width - 50, 8, 40, 38, LV_SYMBOL_UPLOAD,
+            note_uploaded ? theme_accent_soft() : theme_surface(),
+            note_uploaded ? theme_accent() : theme_text(),
+            10, &lv_font_montserrat_16, note_upload_clicked_cb, 0U
+        );
+    }
+
+    if(tools_height > 0) {
+        lv_obj_t * tools = make_panel(
+            content_view,
+            0,
+            primary_height,
+            display_width,
+            tools_height,
+            theme_bg(),
+            0
+        );
+
+        lv_obj_t * dropdown = lv_dropdown_create(tools);
+        lv_obj_set_pos(dropdown, 8, 5);
+        lv_obj_set_size(dropdown, 72, 34);
+        lv_dropdown_set_options(dropdown, "Blank\nRuled\nGrid\nDots");
+        lv_dropdown_set_selected(dropdown, note_pages[note_page_index].paper);
+        lv_obj_set_style_bg_color(dropdown, color(theme_surface()), LV_PART_MAIN);
+        lv_obj_set_style_text_color(dropdown, color(theme_text()), LV_PART_MAIN);
+        lv_obj_set_style_text_font(dropdown, &lv_font_montserrat_12, LV_PART_MAIN);
+        lv_obj_set_style_border_color(dropdown, color(theme_border()), LV_PART_MAIN);
+        lv_obj_set_style_border_width(dropdown, 1, LV_PART_MAIN);
+        lv_obj_set_style_radius(dropdown, 8, LV_PART_MAIN);
+        lv_obj_set_style_pad_hor(dropdown, 7, LV_PART_MAIN);
+        lv_obj_add_event_cb(
+            dropdown,
+            note_paper_changed_cb,
+            LV_EVENT_VALUE_CHANGED,
+            NULL
+        );
+
+        for(uint32_t i = 0; i < 4; i++) {
+            lv_obj_t * swatch = make_button(
+                tools,
+                86 + (int32_t)i * 29,
+                9,
+                24,
+                24,
+                "",
+                ink_colors[i],
+                0xFFFFFF,
+                12,
+                &lv_font_montserrat_12,
+                note_color_clicked_cb,
+                i
+            );
+            lv_obj_set_style_border_width(
+                swatch,
+                !eraser_enabled && note_color_index == i ? 3 : 1,
+                LV_PART_MAIN
+            );
+            lv_obj_set_style_border_color(
+                swatch,
+                color(!eraser_enabled && note_color_index == i
+                    ? theme_accent()
+                    : theme_border()),
+                LV_PART_MAIN
+            );
+        }
+
+        make_button(
+            tools, 204, 7, 28, 30, LV_SYMBOL_MINUS,
+            theme_surface(), theme_text(), 9, &lv_font_montserrat_14,
+            note_width_clicked_cb, (uintptr_t)-1
+        );
+        char size_text[8];
+        lv_snprintf(size_text, sizeof(size_text), "%d", brush_size);
+        lv_obj_t * size_label = lv_label_create(tools);
+        lv_label_set_text(size_label, size_text);
+        lv_obj_set_pos(size_label, 234, 14);
+        lv_obj_set_width(size_label, 20);
+        lv_obj_set_style_text_align(size_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+        text_style(size_label, &lv_font_montserrat_14, theme_text());
+        make_button(
+            tools, 256, 7, 28, 30, LV_SYMBOL_PLUS,
+            theme_surface(), theme_text(), 9, &lv_font_montserrat_14,
+            note_width_clicked_cb, 1U
+        );
+        make_button(
+            tools, 288, 7, 30, 30, LV_SYMBOL_BACKSPACE,
+            eraser_enabled ? theme_accent_soft() : theme_surface(),
+            eraser_enabled ? theme_accent() : theme_text(),
+            9, &lv_font_montserrat_14, note_eraser_clicked_cb, 0U
+        );
+        make_button(
+            tools, 322, 7, 30, 30, LV_SYMBOL_TRASH,
+            theme_surface(), theme_text(), 9, &lv_font_montserrat_14,
+            note_clear_clicked_cb, 0U
+        );
+    }
+
+    int32_t canvas_y = primary_height + tools_height;
+    note_canvas_width = display_width;
+    note_canvas_height = content_height - canvas_y;
+    note_canvas_width = LV_MIN(note_canvas_width, NOTE_CANVAS_MAX_WIDTH);
+    note_canvas_height = LV_MIN(note_canvas_height, NOTE_CANVAS_MAX_HEIGHT);
+
     note_canvas = lv_canvas_create(content_view);
     lv_canvas_set_buffer(
         note_canvas,
@@ -439,340 +809,868 @@ static void render_note_editor(void)
         note_canvas_height,
         LV_COLOR_FORMAT_RGB565
     );
-    if(!has_handwriting) {
-        lv_canvas_fill_bg(note_canvas, color(COLOR_WHITE), LV_OPA_COVER);
-    }
-    lv_obj_set_pos(note_canvas, 8, 42);
-    lv_obj_set_clickable(note_canvas, true);
+    lv_obj_set_pos(note_canvas, 0, canvas_y);
+    lv_obj_set_style_border_width(note_canvas, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(note_canvas, color(0xD9E2E7), LV_PART_MAIN);
+    lv_obj_add_flag(note_canvas, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(note_canvas, note_canvas_event_cb, LV_EVENT_ALL, NULL);
+    note_redraw_canvas();
 
-    lv_obj_t * back_button = lv_button_create(content_view);
-    lv_obj_set_pos(back_button, 8, display_height - 54);
-    lv_obj_set_size(back_button, 52, 42);
-    lv_obj_set_style_radius(back_button, 14, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(back_button, color(COLOR_WHITE), LV_PART_MAIN);
-    lv_obj_set_style_border_width(back_button, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(back_button, color(COLOR_BORDER), LV_PART_MAIN);
-    lv_obj_add_event_cb(back_button, note_back_clicked_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t * back_icon = lv_label_create(back_button);
-    lv_label_set_text(back_icon, LV_SYMBOL_LEFT);
-    lv_obj_center(back_icon);
-    text_style(back_icon, &lv_font_montserrat_16, COLOR_MUTED);
-
-    lv_obj_t * clear_button = lv_button_create(content_view);
-    lv_obj_set_pos(clear_button, 68, display_height - 54);
-    lv_obj_set_size(clear_button, 52, 42);
-    lv_obj_set_style_radius(clear_button, 14, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(clear_button, color(COLOR_WHITE), LV_PART_MAIN);
-    lv_obj_set_style_border_width(clear_button, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(clear_button, color(COLOR_BORDER), LV_PART_MAIN);
-    lv_obj_add_event_cb(clear_button, note_clear_clicked_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t * clear_icon = lv_label_create(clear_button);
-    lv_label_set_text(clear_icon, LV_SYMBOL_CLOSE);
-    lv_obj_center(clear_icon);
-    text_style(clear_icon, &lv_font_montserrat_16, COLOR_MUTED);
-
-    lv_obj_t * size_label = lv_label_create(content_view);
-    lv_label_set_text(size_label, "SIZE");
-    lv_obj_set_pos(size_label, 132, display_height - 44);
-    text_style(size_label, &lv_font_montserrat_12, COLOR_MUTED);
-
-    lv_obj_t * size_slider = lv_slider_create(content_view);
-    lv_obj_set_pos(size_slider, 168, display_height - 45);
-    lv_obj_set_size(size_slider, 92, 14);
-    lv_slider_set_range(size_slider, 2, 12);
-    lv_slider_set_value(size_slider, brush_size, LV_ANIM_OFF);
-    lv_obj_add_event_cb(size_slider, brush_size_changed_cb, LV_EVENT_VALUE_CHANGED, NULL);
-
-    lv_obj_t * save_button = lv_button_create(content_view);
-    lv_obj_set_pos(save_button, display_width - 82, display_height - 54);
-    lv_obj_set_size(save_button, 74, 42);
-    lv_obj_set_style_radius(save_button, 14, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(save_button, color(COLOR_TEAL), LV_PART_MAIN);
-    lv_obj_set_style_border_width(save_button, 0, LV_PART_MAIN);
-    lv_obj_add_event_cb(save_button, note_save_clicked_cb, LV_EVENT_CLICKED, NULL);
-
-    lv_obj_t * save_label = lv_label_create(save_button);
-    lv_label_set_text(save_label, "保存");
-    lv_obj_center(save_label);
-    text_style(save_label, &waferlog_font_16, COLOR_WHITE);
-    set_status("笔记编辑");
+    make_button(
+        content_view,
+        display_width - 44,
+        canvas_y + 8,
+        36,
+        36,
+        note_focus_mode ? LV_SYMBOL_EYE_OPEN : LV_SYMBOL_EYE_CLOSE,
+        0xFFFFFF,
+        0x18202A,
+        10,
+        &lv_font_montserrat_16,
+        note_focus_clicked_cb,
+        0U
+    );
 }
 
-static void add_service_control_card(
+static void make_home_geometry(lv_obj_t * hero, int32_t hero_width)
+{
+    lv_obj_t * shape = make_panel(
+        hero,
+        hero_width - 120,
+        30,
+        54,
+        82,
+        dark_mode ? 0xBA4C68 : 0xFF647F,
+        22
+    );
+    lv_obj_set_style_transform_rotation(shape, 120, LV_PART_MAIN);
+
+    shape = make_panel(
+        hero,
+        hero_width - 70,
+        17,
+        48,
+        76,
+        dark_mode ? 0x19748B : 0x42C0DE,
+        23
+    );
+    lv_obj_set_style_transform_rotation(shape, -100, LV_PART_MAIN);
+
+    make_panel(
+        hero,
+        hero_width - 59,
+        91,
+        40,
+        40,
+        dark_mode ? 0xB42E62 : 0xF34483,
+        20
+    );
+
+    lv_obj_t * record = make_button(
+        hero,
+        hero_width - 116,
+        21,
+        32,
+        32,
+        "REC",
+        0xF2C84B,
+        0x5C521E,
+        11,
+        &lv_font_montserrat_12,
+        recording_clicked_cb,
+        0U
+    );
+    lv_obj_move_foreground(record);
+}
+
+static lv_obj_t * make_home_tile(
+    lv_obj_t * parent,
     int32_t x,
     int32_t y,
     int32_t width,
+    int32_t height,
+    uint32_t background,
+    const char * symbol,
+    uint32_t symbol_color,
     const char * title,
-    const char * state,
-    bool active,
-    uintptr_t action,
-    const char * inactive_action,
-    const char * active_action
+    const char * detail,
+    lv_event_cb_t callback
 )
 {
-    int32_t card_height = is_landscape ? 112 : 82;
-    lv_obj_t * card = make_card(content_view, x, y, width, card_height, COLOR_WHITE, COLOR_BORDER);
+    lv_obj_t * tile = make_panel(parent, x, y, width, height, background, 14);
+    lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(tile, callback, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t * title_label = lv_label_create(card);
+    lv_obj_t * icon = lv_label_create(tile);
+    lv_label_set_text(icon, symbol);
+    lv_obj_set_pos(icon, 16, 16);
+    text_style(icon, &lv_font_montserrat_24, symbol_color);
+
+    lv_obj_t * title_label = lv_label_create(tile);
     lv_label_set_text(title_label, title);
-    lv_obj_set_pos(title_label, is_landscape ? 12 : 16, is_landscape ? 10 : 13);
-    text_style(
-        title_label,
-        is_landscape ? &lv_font_montserrat_12 : &lv_font_montserrat_20,
-        COLOR_INK
-    );
+    lv_obj_set_pos(title_label, 16, height - 59);
+    text_style(title_label, &lv_font_montserrat_20, 0x121318);
 
-    lv_obj_t * state_label = lv_label_create(card);
-    lv_label_set_text(state_label, state);
-    lv_obj_set_pos(state_label, is_landscape ? 12 : 16, is_landscape ? 34 : 47);
-    text_style(
-        state_label,
-        &lv_font_montserrat_12,
-        active ? (action == 12U ? COLOR_PINK : COLOR_TEAL) : COLOR_MUTED
-    );
+    lv_obj_t * detail_label = lv_label_create(tile);
+    lv_label_set_text(detail_label, detail);
+    lv_obj_set_pos(detail_label, 16, height - 29);
+    text_style(detail_label, &lv_font_montserrat_12, 0x555962);
+    return tile;
+}
 
-    lv_obj_t * button = lv_button_create(card);
-    lv_obj_set_pos(
-        button,
-        is_landscape ? 12 : width - 102,
-        is_landscape ? 62 : 20
+static void render_home_portrait(void)
+{
+    int32_t margin = 16;
+    int32_t content_width = display_width - margin * 2;
+
+    lv_obj_t * hero = make_panel(
+        content_view,
+        margin,
+        10,
+        content_width,
+        142,
+        dark_mode ? 0x44358F : 0xD8CEFF,
+        14
     );
-    lv_obj_set_size(button, is_landscape ? width - 24 : 96, is_landscape ? 38 : 42);
-    lv_obj_set_style_radius(button, 14, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(
-        button,
-        color(active ? COLOR_PINK : (action == 12U ? COLOR_YELLOW : COLOR_TEAL)),
+    lv_obj_set_style_bg_grad_color(
+        hero,
+        color(dark_mode ? 0x105665 : 0xC5F0F5),
         LV_PART_MAIN
     );
-    lv_obj_add_event_cb(button, service_button_clicked_cb, LV_EVENT_CLICKED, (void *)action);
+    lv_obj_set_style_bg_grad_dir(hero, LV_GRAD_DIR_HOR, LV_PART_MAIN);
+    lv_obj_add_flag(hero, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(hero, home_start_clicked_cb, LV_EVENT_CLICKED, NULL);
 
-    lv_obj_t * button_label = lv_label_create(button);
-    lv_label_set_text(button_label, active ? active_action : inactive_action);
-    lv_obj_center(button_label);
-    text_style(
-        button_label,
-        &lv_font_montserrat_12,
-        !active && action == 12U ? COLOR_INK : COLOR_WHITE
+    uint32_t hero_text = dark_mode ? 0xFFFFFF : 0x121318;
+    lv_obj_t * kicker = lv_label_create(hero);
+    lv_label_set_text(kicker, "CAPTURE TODAY");
+    lv_obj_set_pos(kicker, 14, 13);
+    text_style(kicker, &lv_font_montserrat_14, hero_text);
+
+    lv_obj_t * hero_title = lv_label_create(hero);
+    lv_label_set_text(hero_title, "Keep the idea\nbefore it fades.");
+    lv_obj_set_pos(hero_title, 14, 34);
+    text_style(hero_title, &lv_font_montserrat_24, hero_text);
+
+    make_button(
+        hero,
+        14,
+        91,
+        118,
+        34,
+        "Start writing",
+        0x121318,
+        0xFFFFFF,
+        10,
+        &lv_font_montserrat_14,
+        home_start_clicked_cb,
+        0U
     );
+
+    char page_text[16];
+    lv_snprintf(page_text, sizeof(page_text), "Page %02u", note_page_index + 1U);
+    lv_obj_t * page_label = lv_label_create(hero);
+    lv_label_set_text(page_label, page_text);
+    lv_obj_set_pos(page_label, 14, 124);
+    text_style(page_label, &lv_font_montserrat_12, hero_text);
+    make_home_geometry(hero, content_width);
+
+    lv_obj_t * quick_title = lv_label_create(content_view);
+    lv_label_set_text(quick_title, "Quick capture");
+    lv_obj_set_pos(quick_title, margin, 166);
+    text_style(quick_title, &lv_font_montserrat_24, theme_text());
+
+    lv_obj_t * upload_icon = lv_label_create(content_view);
+    lv_label_set_text(upload_icon, LV_SYMBOL_UPLOAD);
+    lv_obj_set_pos(upload_icon, display_width - 35, 174);
+    text_style(upload_icon, &lv_font_montserrat_14, theme_muted());
+
+    int32_t wifi_width = (content_width * 3) / 5;
+    int32_t ble_width = content_width - wifi_width - 10;
+    make_home_tile(
+        content_view,
+        margin,
+        202,
+        wifi_width,
+        132,
+        dark_mode ? 0x24616A : 0xAEE3EA,
+        LV_SYMBOL_WIFI,
+        0x121318,
+        "WiFi",
+        waferlog_wifi_is_connected() ? "WaferLog Lab" : "Tap to connect",
+        wifi_clicked_cb
+    );
+    make_home_tile(
+        content_view,
+        margin + wifi_width + 10,
+        202,
+        ble_width,
+        132,
+        theme_surface(),
+        LV_SYMBOL_BLUETOOTH,
+        accent_themes[theme_index].media,
+        "Bluetooth",
+        waferlog_ble_is_enabled() ? "WaferLog T5AI" : "Tap to enable",
+        bluetooth_clicked_cb
+    );
+
+    lv_obj_t * recent = make_panel(
+        content_view,
+        margin,
+        344,
+        content_width,
+        68,
+        theme_surface(),
+        12
+    );
+    lv_obj_add_flag(recent, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(recent, recent_clicked_cb, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * file_icon = make_panel(
+        recent, 12, 12, 44, 44, accent_themes[theme_index].media, 11
+    );
+    lv_obj_set_style_bg_grad_color(file_icon, color(0xFF7A32), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(file_icon, LV_GRAD_DIR_VER, LV_PART_MAIN);
+    lv_obj_t * file_label = lv_label_create(file_icon);
+    lv_label_set_text(file_label, LV_SYMBOL_FILE);
+    lv_obj_center(file_label);
+    text_style(file_label, &lv_font_montserrat_16, 0xFFFFFF);
+
+    lv_obj_t * recent_title = lv_label_create(recent);
+    lv_label_set_text(recent_title, "Latest note");
+    lv_obj_set_pos(recent_title, 66, 13);
+    text_style(recent_title, &lv_font_montserrat_16, theme_text());
+
+    lv_obj_t * recent_detail = lv_label_create(recent);
+    lv_label_set_text(
+        recent_detail,
+        any_handwriting()
+            ? (note_uploaded ? "Uploaded to server" : (note_saved ? "Saved locally" : "Unsaved changes"))
+            : "No saved page yet"
+    );
+    lv_obj_set_pos(recent_detail, 66, 36);
+    text_style(recent_detail, &lv_font_montserrat_12, theme_muted());
+
+    lv_obj_t * recent_upload = lv_label_create(recent);
+    lv_label_set_text(recent_upload, LV_SYMBOL_UPLOAD);
+    lv_obj_set_pos(recent_upload, content_width - 31, 25);
+    text_style(recent_upload, &lv_font_montserrat_16, theme_muted());
+
+    lv_obj_t * status = make_panel(
+        content_view,
+        margin,
+        422,
+        content_width,
+        54,
+        theme_surface(),
+        12
+    );
+    char wifi_text[32];
+    lv_snprintf(
+        wifi_text,
+        sizeof(wifi_text),
+        LV_SYMBOL_WIFI " %s   BT %s",
+        waferlog_wifi_is_connected() ? LV_SYMBOL_OK : "-",
+        waferlog_ble_is_enabled() ? LV_SYMBOL_OK : "-"
+    );
+    lv_obj_t * wifi_state = lv_label_create(status);
+    lv_label_set_text(wifi_state, wifi_text);
+    lv_obj_set_pos(wifi_state, 20, 19);
+    text_style(wifi_state, &lv_font_montserrat_14, theme_muted());
+
+    lv_obj_t * lan_state = lv_label_create(status);
+    lv_label_set_text(
+        lan_state,
+        note_uploaded ? LV_SYMBOL_UPLOAD " Cloud" : LV_SYMBOL_UPLOAD " LAN"
+    );
+    lv_obj_set_pos(lan_state, content_width / 2 - 17, 19);
+    text_style(lan_state, &lv_font_montserrat_14, theme_muted());
+
+    lv_obj_t * battery = lv_label_create(status);
+    lv_label_set_text(battery, LV_SYMBOL_BATTERY_FULL " 99%");
+    lv_obj_set_pos(battery, content_width - 90, 19);
+    text_style(battery, &lv_font_montserrat_14, theme_muted());
 }
 
-static void render_settings(void)
+static void render_home_landscape(void)
 {
-    set_note_fullscreen(false);
-    lv_obj_clean(content_view);
-    update_tabs(false);
-
-    lv_obj_t * title = lv_label_create(content_view);
-    lv_label_set_text(title, "DEVICE SERVICES");
-    lv_obj_set_pos(title, 16, is_landscape ? 8 : 14);
-    text_style(title, is_landscape ? &lv_font_montserrat_16 : &lv_font_montserrat_20, COLOR_INK);
-
-    lv_obj_t * subtitle = lv_label_create(content_view);
-    lv_label_set_text(subtitle, "Windows simulator state");
-    lv_obj_set_pos(subtitle, is_landscape ? 190 : 16, is_landscape ? 11 : 42);
-    text_style(subtitle, &lv_font_montserrat_12, COLOR_MUTED);
-
-    int32_t card_width = is_landscape ? (display_width - 36) / 3 : display_width - 24;
-    int32_t card_y = is_landscape ? 44 : 72;
-    int32_t card_gap = is_landscape ? 6 : 10;
-    add_service_control_card(
+    int32_t height = lv_obj_get_height(content_view);
+    lv_obj_t * hero = make_panel(
+        content_view,
         12,
-        card_y,
-        card_width,
-        "Wi-Fi",
-        waferlog_wifi_is_connected() ? "CONNECTED" : "DISCONNECTED",
-        waferlog_wifi_is_connected(),
-        10U,
-        "CONNECT",
-        "DISCONNECT"
+        10,
+        270,
+        height - 20,
+        dark_mode ? 0x44358F : 0xD8CEFF,
+        14
     );
-    add_service_control_card(
-        12 + card_width + card_gap,
-        is_landscape ? card_y : 164,
-        card_width,
-        "BLUETOOTH",
-        waferlog_ble_is_enabled() ? "ENABLED" : "DISABLED",
-        waferlog_ble_is_enabled(),
-        11U,
-        "ENABLE",
-        "DISABLE"
+    lv_obj_set_style_bg_grad_color(
+        hero,
+        color(dark_mode ? 0x105665 : 0xC5F0F5),
+        LV_PART_MAIN
     );
-    add_service_control_card(
-        12 + (card_width + card_gap) * 2,
-        is_landscape ? card_y : 256,
-        card_width,
-        "AUDIO RECORDING",
-        waferlog_recording_is_active() ? "RECORDING" : "READY",
-        waferlog_recording_is_active(),
-        12U,
-        "START",
-        "STOP"
+    lv_obj_set_style_bg_grad_dir(hero, LV_GRAD_DIR_HOR, LV_PART_MAIN);
+    lv_obj_add_flag(hero, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(hero, home_start_clicked_cb, LV_EVENT_CLICKED, NULL);
+
+    uint32_t hero_text = dark_mode ? 0xFFFFFF : 0x121318;
+    lv_obj_t * kicker = lv_label_create(hero);
+    lv_label_set_text(kicker, "CAPTURE TODAY");
+    lv_obj_set_pos(kicker, 16, 16);
+    text_style(kicker, &lv_font_montserrat_14, hero_text);
+    lv_obj_t * title = lv_label_create(hero);
+    lv_label_set_text(title, "Keep the idea\nbefore it fades.");
+    lv_obj_set_pos(title, 16, 43);
+    text_style(title, &lv_font_montserrat_24, hero_text);
+    make_button(
+        hero,
+        16,
+        112,
+        118,
+        36,
+        "Start writing",
+        0x121318,
+        0xFFFFFF,
+        10,
+        &lv_font_montserrat_14,
+        home_start_clicked_cb,
+        0U
+    );
+    make_home_geometry(hero, 270);
+
+    int32_t right_x = 294;
+    int32_t right_width = display_width - right_x - 12;
+    make_home_tile(
+        content_view,
+        right_x,
+        10,
+        (right_width - 10) / 2,
+        120,
+        dark_mode ? 0x24616A : 0xAEE3EA,
+        LV_SYMBOL_WIFI,
+        0x121318,
+        "WiFi",
+        waferlog_wifi_is_connected() ? "WaferLog Lab" : "Tap to connect",
+        wifi_clicked_cb
+    );
+    make_home_tile(
+        content_view,
+        right_x + (right_width - 10) / 2 + 10,
+        10,
+        (right_width - 10) / 2,
+        120,
+        theme_surface(),
+        LV_SYMBOL_BLUETOOTH,
+        accent_themes[theme_index].media,
+        "Bluetooth",
+        waferlog_ble_is_enabled() ? "WaferLog T5AI" : "Tap to enable",
+        bluetooth_clicked_cb
     );
 
-    lv_obj_t * back_button = lv_button_create(content_view);
-    lv_obj_set_pos(
-        back_button,
-        12,
-        display_height - main_header_height - main_footer_height - (is_landscape ? 42 : 52)
+    lv_obj_t * recent = make_panel(
+        content_view,
+        right_x,
+        140,
+        right_width,
+        height - 150,
+        theme_surface(),
+        12
     );
-    lv_obj_set_size(back_button, 92, is_landscape ? 32 : 40);
-    lv_obj_set_style_radius(back_button, 14, LV_PART_MAIN);
-    lv_obj_set_style_bg_color(back_button, color(COLOR_DARK), LV_PART_MAIN);
-    lv_obj_add_event_cb(back_button, service_button_clicked_cb, LV_EVENT_CLICKED, (void *)13U);
-    lv_obj_t * back_label = lv_label_create(back_button);
-    lv_label_set_text(back_label, "BACK");
-    lv_obj_center(back_label);
-    text_style(back_label, &lv_font_montserrat_12, COLOR_WHITE);
-
-    set_status("DEVICE SERVICES");
+    lv_obj_add_flag(recent, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(recent, recent_clicked_cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t * title_label = lv_label_create(recent);
+    lv_label_set_text(title_label, "Latest note");
+    lv_obj_set_pos(title_label, 16, 14);
+    text_style(title_label, &lv_font_montserrat_16, theme_text());
+    lv_obj_t * detail = lv_label_create(recent);
+    lv_label_set_text(
+        detail,
+        any_handwriting() ? "Open the current notebook" : "No saved page yet"
+    );
+    lv_obj_set_pos(detail, 16, 42);
+    text_style(detail, &lv_font_montserrat_12, theme_muted());
 }
 
-static void render_landscape_home(void)
+static void render_home_page(void)
 {
-    lv_obj_t * title = lv_label_create(content_view);
-    lv_label_set_text(title, "WaferLog 工作台");
-    lv_obj_set_pos(title, 16, 14);
-    text_style(title, &waferlog_font_16, COLOR_INK);
-
-    lv_obj_t * left = make_card(content_view, 12, 48, 166, 154, COLOR_WHITE, COLOR_BORDER);
-    lv_obj_t * left_title = lv_label_create(left);
-    lv_label_set_text(left_title, "快速记录");
-    lv_obj_set_pos(left_title, 16, 12);
-    text_style(left_title, &waferlog_font_16, COLOR_INK);
-    add_action_card(left, 12, 44, 66, "笔记", "+", COLOR_TEAL_PALE, 1);
-    add_action_card(left, 88, 44, 66, "录音", "MIC", COLOR_YELLOW_PALE, 2);
-
-    lv_obj_t * right_title = lv_label_create(content_view);
-    lv_label_set_text(right_title, "最近更新");
-    lv_obj_set_pos(right_title, 198, 14);
-    text_style(right_title, &waferlog_font_16, COLOR_INK);
-    add_note_card(content_view, 198, 48, 270, "T5AI 界面想法", "2 个节点 · 待 AI 分析", COLOR_TEAL);
-    add_note_card(content_view, 198, 116, 270, "今天的产品灵感", "录音 03:18 · 本地保存", COLOR_BLUE);
-}
-
-static void render_home(void)
-{
-    set_note_fullscreen(false);
     lv_obj_clean(content_view);
     note_canvas = NULL;
-    update_tabs(false);
+    navigation_update();
     if(is_landscape) {
-        render_landscape_home();
+        render_home_landscape();
     }
     else {
-        render_portrait_home();
+        render_home_portrait();
     }
-    set_status("WaferLog · 本地模式");
 }
 
-static int days_in_month(int year, int month)
+static void render_calendar_page(void)
 {
-    static const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-    if(month == 2 && ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0)) {
-        return 29;
-    }
-    return days[month - 1];
-}
-
-static void render_calendar(void)
-{
-    set_note_fullscreen(false);
     lv_obj_clean(content_view);
-    update_tabs(true);
+    note_canvas = NULL;
+    navigation_update();
 
     time_t now = time(NULL);
-    struct tm local_time = *localtime(&now);
-    int year = local_time.tm_year + 1900;
-    int month = local_time.tm_mon + 1;
-    int today = local_time.tm_mday;
-    char month_text[32];
-    lv_snprintf(month_text, sizeof(month_text), "%04d / %02d", year, month);
+    struct tm local_time;
+#ifdef _WIN32
+    localtime_s(&local_time, &now);
+#else
+    localtime_r(&now, &local_time);
+#endif
 
-    if(!is_landscape) {
-        lv_obj_t * message = make_card(content_view, 16, 74, 288, 150, COLOR_WHITE, COLOR_BORDER);
-        lv_obj_t * message_title = lv_label_create(message);
-        lv_label_set_text(message_title, "桌面电子日历");
-        lv_obj_set_pos(message_title, 24, 24);
-        text_style(message_title, &waferlog_font_16, COLOR_INK);
+    int32_t content_height = lv_obj_get_height(content_view);
+    int32_t margin = 12;
+    int32_t hero_width = is_landscape ? 300 : display_width - margin * 2;
+    int32_t hero_height = is_landscape ? content_height - margin * 2 : 142;
+    lv_obj_t * hero = make_panel(
+        content_view,
+        margin,
+        margin,
+        hero_width,
+        hero_height,
+        dark_mode ? 0x44358F : 0xA993FF,
+        14
+    );
+    lv_obj_set_style_bg_grad_color(
+        hero,
+        color(dark_mode ? 0x105665 : 0x24D9F4),
+        LV_PART_MAIN
+    );
+    lv_obj_set_style_bg_grad_dir(hero, LV_GRAD_DIR_HOR, LV_PART_MAIN);
 
-        lv_obj_t * message_detail = lv_label_create(message);
-        lv_label_set_text(message_detail, "横屏启动模拟器查看日历视图");
-        lv_obj_set_pos(message_detail, 24, 60);
-        text_style(message_detail, &waferlog_font_14, COLOR_MUTED);
+    lv_obj_t * desk = lv_label_create(hero);
+    lv_label_set_text(desk, "Desk calendar");
+    lv_obj_set_pos(desk, 14, 14);
+    text_style(desk, &lv_font_montserrat_16, 0x121318);
 
-        lv_obj_t * command = lv_label_create(message);
-        lv_label_set_text(command, "waferlog.exe --landscape");
-        lv_obj_set_pos(command, 24, 99);
-        text_style(command, &lv_font_montserrat_12, COLOR_TEAL);
-        set_status("日历 · 请使用横屏模式");
-        return;
+    char clock_text[8];
+    lv_snprintf(
+        clock_text,
+        sizeof(clock_text),
+        "%02d:%02d",
+        local_time.tm_hour,
+        local_time.tm_min
+    );
+    lv_obj_t * clock = lv_label_create(hero);
+    lv_label_set_text(clock, clock_text);
+    lv_obj_set_pos(clock, 14, 38);
+    text_style(clock, &lv_font_montserrat_32, 0x121318);
+
+    char date_text[16];
+    lv_snprintf(
+        date_text,
+        sizeof(date_text),
+        "%04d.%02d.%02d",
+        local_time.tm_year + 1900,
+        local_time.tm_mon + 1,
+        local_time.tm_mday
+    );
+    lv_obj_t * date = lv_label_create(hero);
+    lv_label_set_text(date, date_text);
+    lv_obj_set_pos(date, 14, 78);
+    text_style(date, &lv_font_montserrat_16, 0x121318);
+
+    lv_obj_t * weather = lv_label_create(hero);
+    lv_label_set_text(weather, "22 C\nClear");
+    lv_obj_set_pos(weather, 14, 102);
+    text_style(weather, &lv_font_montserrat_16, 0x121318);
+
+    lv_obj_t * agenda_title = lv_label_create(hero);
+    lv_label_set_text(agenda_title, "Today's agenda");
+    lv_obj_set_pos(agenda_title, is_landscape ? 158 : 176, 14);
+    text_style(agenda_title, &lv_font_montserrat_14, 0x121318);
+
+    lv_obj_t * agenda = lv_label_create(hero);
+    lv_label_set_text(agenda, LV_SYMBOL_OK " Review notes\n\n  Upload recap\n\n  Call at 16:00");
+    lv_obj_set_pos(agenda, is_landscape ? 158 : 176, 38);
+    lv_obj_set_width(agenda, hero_width - (is_landscape ? 168 : 186));
+    lv_label_set_long_mode(agenda, LV_LABEL_LONG_WRAP);
+    text_style(agenda, &lv_font_montserrat_14, 0x121318);
+
+    int32_t calendar_x = is_landscape ? hero_width + margin * 2 : margin;
+    int32_t calendar_y = is_landscape ? margin : hero_height + margin * 2;
+    int32_t calendar_width =
+        is_landscape ? display_width - calendar_x - margin : display_width - margin * 2;
+    int32_t calendar_height =
+        is_landscape ? content_height - margin * 2 : content_height - calendar_y - margin;
+
+    lv_obj_t * calendar = lv_calendar_create(content_view);
+    lv_obj_set_pos(calendar, calendar_x, calendar_y);
+    lv_obj_set_size(calendar, calendar_width, calendar_height);
+    lv_calendar_set_today_year(calendar, local_time.tm_year + 1900);
+    lv_calendar_set_today_month(calendar, local_time.tm_mon + 1);
+    lv_calendar_set_today_day(calendar, local_time.tm_mday);
+    lv_calendar_set_shown_year(calendar, local_time.tm_year + 1900);
+    lv_calendar_set_shown_month(calendar, local_time.tm_mon + 1);
+    lv_calendar_add_header_arrow(calendar);
+    lv_obj_set_style_bg_color(calendar, color(theme_surface()), LV_PART_MAIN);
+    lv_obj_set_style_text_color(calendar, color(theme_text()), LV_PART_MAIN);
+    lv_obj_set_style_text_font(calendar, &lv_font_montserrat_14, LV_PART_MAIN);
+    lv_obj_set_style_border_color(calendar, color(theme_border()), LV_PART_MAIN);
+    lv_obj_set_style_border_width(calendar, 1, LV_PART_MAIN);
+    lv_obj_set_style_radius(calendar, 10, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(calendar, color(theme_accent()), LV_PART_ITEMS | LV_STATE_CHECKED);
+    lv_obj_set_style_text_color(calendar, color(0xFFFFFF), LV_PART_ITEMS | LV_STATE_CHECKED);
+}
+
+static void render_current_page(void)
+{
+    if(current_page == PAGE_NOTES) {
+        render_note_page();
     }
-
-    lv_obj_t * date_card = make_card(content_view, 12, 12, 112, 194, COLOR_DARK, COLOR_DARK);
-    lv_obj_t * month_label = lv_label_create(date_card);
-    lv_label_set_text(month_label, month_text);
-    lv_obj_set_pos(month_label, 14, 15);
-    text_style(month_label, &lv_font_montserrat_12, 0xB9E5E2);
-
-    char today_text[8];
-    lv_snprintf(today_text, sizeof(today_text), "%02d", today);
-    lv_obj_t * day_label = lv_label_create(date_card);
-    lv_label_set_text(day_label, today_text);
-    lv_obj_set_pos(day_label, 13, 44);
-    text_style(day_label, &lv_font_montserrat_48, COLOR_WHITE);
-
-    lv_obj_t * date_hint = lv_label_create(date_card);
-    lv_label_set_text(date_hint, "TODAY");
-    lv_obj_set_pos(date_hint, 16, 105);
-    text_style(date_hint, &lv_font_montserrat_12, 0xF5BE66);
-
-    lv_obj_t * event = lv_label_create(date_card);
-    lv_label_set_text(event, "20:00  AI 回顾");
-    lv_obj_set_pos(event, 16, 140);
-    text_style(event, &waferlog_font_14, COLOR_WHITE);
-
-    lv_obj_t * calendar = make_card(content_view, 136, 12, 332, 194, COLOR_WHITE, COLOR_BORDER);
-    static const char * weekdays[] = {"MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"};
-    for(int col = 0; col < 7; col++) {
-        lv_obj_t * weekday = lv_label_create(calendar);
-        lv_label_set_text(weekday, weekdays[col]);
-        lv_obj_set_pos(weekday, 12 + col * 45, 10);
-        text_style(weekday, &lv_font_montserrat_12, col > 4 ? COLOR_TEAL : COLOR_MUTED);
+    else if(current_page == PAGE_CALENDAR) {
+        render_calendar_page();
     }
+    else {
+        render_home_page();
+    }
+}
 
-    struct tm first_day = local_time;
-    first_day.tm_mday = 1;
-    mktime(&first_day);
-    int start_column = (first_day.tm_wday + 6) % 7;
-    int month_days = days_in_month(year, month);
+static void rebuild_ui_async(void * user_data)
+{
+    LV_UNUSED(user_data);
+    if(app_root != NULL) {
+        lv_obj_delete(app_root);
+        app_root = NULL;
+    }
+    waferlog_ui_create();
+}
 
-    for(int day = 1; day <= month_days; day++) {
-        int cell = start_column + day - 1;
-        int row = cell / 7;
-        int col = cell % 7;
-        lv_obj_t * day_button = lv_button_create(calendar);
-        lv_obj_set_pos(day_button, 8 + col * 45, 31 + row * 26);
-        lv_obj_set_size(day_button, 38, 22);
-        lv_obj_set_style_radius(day_button, 11, LV_PART_MAIN);
-        lv_obj_set_style_border_width(day_button, 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_color(
-            day_button,
-            color(day == today ? COLOR_TEAL : COLOR_WHITE),
-            LV_PART_MAIN
+static void request_rebuild(void)
+{
+    lv_async_call(rebuild_ui_async, NULL);
+}
+
+static void rotate_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    lv_display_t * display = lv_display_get_default();
+    bool next_landscape = !is_landscape;
+    lv_display_set_rotation(display, LV_DISPLAY_ROTATION_0);
+    lv_display_set_resolution(
+        display,
+        next_landscape ? 640 : 360,
+        next_landscape ? 360 : 640
+    );
+    if(next_landscape) {
+        current_page = PAGE_CALENDAR;
+    }
+    request_rebuild();
+}
+
+static void language_open_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    show_language_overlay();
+}
+
+static void appearance_open_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    show_appearance_overlay();
+}
+
+static void overlay_close_clicked_cb(lv_event_t * event)
+{
+    lv_obj_t * overlay = lv_event_get_user_data(event);
+    if(overlay != NULL) {
+        lv_obj_delete_async(overlay);
+    }
+}
+
+static void language_selected_cb(lv_event_t * event)
+{
+    language_index = (uint8_t)(uintptr_t)lv_event_get_user_data(event);
+    static const char * codes[] = {"EN", "中", "日", "FR", "RU"};
+    if(language_label != NULL) {
+        lv_label_set_text(language_label, codes[language_index]);
+    }
+    lv_obj_t * overlay = lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target_obj(event)));
+    lv_obj_delete_async(overlay);
+}
+
+static lv_obj_t * create_overlay(int32_t sheet_height, const char * title)
+{
+    lv_obj_t * overlay = make_panel(
+        app_root,
+        0,
+        0,
+        display_width,
+        display_height,
+        0x000000,
+        0
+    );
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_move_foreground(overlay);
+
+    int32_t sheet_width = is_landscape ? LV_MIN(460, display_width) : display_width;
+    lv_obj_t * sheet = make_panel(
+        overlay,
+        (display_width - sheet_width) / 2,
+        display_height - sheet_height,
+        sheet_width,
+        sheet_height,
+        theme_surface(),
+        18
+    );
+    lv_obj_set_style_radius(sheet, 18, LV_PART_MAIN);
+    lv_obj_set_style_border_width(sheet, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(sheet, color(theme_border()), LV_PART_MAIN);
+
+    lv_obj_t * title_label = lv_label_create(sheet);
+    lv_label_set_text(title_label, title);
+    lv_obj_set_pos(title_label, 16, 18);
+    text_style(title_label, &lv_font_montserrat_24, theme_text());
+
+    make_button(
+        sheet,
+        sheet_width - 52,
+        12,
+        40,
+        40,
+        LV_SYMBOL_CLOSE,
+        theme_surface(),
+        theme_text(),
+        12,
+        &lv_font_montserrat_16,
+        overlay_close_clicked_cb,
+        (uintptr_t)overlay
+    );
+    return overlay;
+}
+
+static void show_language_overlay(void)
+{
+    int32_t height = is_landscape ? 300 : 306;
+    lv_obj_t * overlay = create_overlay(height, "Language");
+    lv_obj_t * sheet = lv_obj_get_child(overlay, 0);
+    int32_t sheet_width = is_landscape ? LV_MIN(460, display_width) : display_width;
+    static const char * names[] = {
+        "English",
+        "中文",
+        "日本語",
+        "Français",
+        "Русский"
+    };
+
+    for(uint32_t i = 0; i < 5; i++) {
+        lv_obj_t * button = make_button(
+            sheet,
+            14,
+            64 + (int32_t)i * 46,
+            sheet_width - 28,
+            42,
+            names[i],
+            i == language_index ? theme_accent_soft() : theme_surface(),
+            i == language_index ? theme_accent() : theme_text(),
+            10,
+            &waferlog_font_16,
+            language_selected_cb,
+            i
         );
-
-        char day_text[4];
-        lv_snprintf(day_text, sizeof(day_text), "%d", day);
-        lv_obj_t * day_label = lv_label_create(day_button);
-        lv_label_set_text(day_label, day_text);
-        lv_obj_center(day_label);
-        text_style(day_label, &lv_font_montserrat_12, day == today ? COLOR_WHITE : COLOR_INK);
+        lv_obj_set_style_text_align(button, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     }
+}
 
-    set_status("日历 · 今日有 1 个 AI 回顾");
+static void appearance_mode_selected_cb(lv_event_t * event)
+{
+    dark_mode = (bool)(uintptr_t)lv_event_get_user_data(event);
+    request_rebuild();
+}
+
+static void appearance_color_selected_cb(lv_event_t * event)
+{
+    theme_index = (uint8_t)(uintptr_t)lv_event_get_user_data(event);
+    request_rebuild();
+}
+
+static void show_appearance_overlay(void)
+{
+    int32_t height = is_landscape ? 270 : 266;
+    lv_obj_t * overlay = create_overlay(height, "Appearance");
+    lv_obj_t * sheet = lv_obj_get_child(overlay, 0);
+    int32_t sheet_width = is_landscape ? LV_MIN(460, display_width) : display_width;
+
+    lv_obj_t * mode_label = lv_label_create(sheet);
+    lv_label_set_text(mode_label, "Display mode");
+    lv_obj_set_pos(mode_label, 16, 62);
+    text_style(mode_label, &lv_font_montserrat_14, theme_muted());
+
+    make_button(
+        sheet,
+        16,
+        90,
+        (sheet_width - 44) / 2,
+        46,
+        LV_SYMBOL_EYE_OPEN "  Light",
+        !dark_mode ? theme_accent_soft() : theme_surface(),
+        !dark_mode ? theme_accent() : theme_text(),
+        10,
+        &lv_font_montserrat_16,
+        appearance_mode_selected_cb,
+        0U
+    );
+    make_button(
+        sheet,
+        28 + (sheet_width - 44) / 2,
+        90,
+        (sheet_width - 44) / 2,
+        46,
+        LV_SYMBOL_EYE_CLOSE "  Dark",
+        dark_mode ? theme_accent_soft() : theme_surface(),
+        dark_mode ? theme_accent() : theme_text(),
+        10,
+        &lv_font_montserrat_16,
+        appearance_mode_selected_cb,
+        1U
+    );
+
+    lv_obj_t * color_label = lv_label_create(sheet);
+    lv_label_set_text(color_label, "Color theme");
+    lv_obj_set_pos(color_label, 16, 150);
+    text_style(color_label, &lv_font_montserrat_14, theme_muted());
+
+    int32_t total_width = 4 * 46 + 3 * 18;
+    int32_t start_x = (sheet_width - total_width) / 2;
+    for(uint32_t i = 0; i < 4; i++) {
+        lv_obj_t * swatch = make_button(
+            sheet,
+            start_x + (int32_t)i * 64,
+            182,
+            46,
+            46,
+            "",
+            accent_themes[i].accent,
+            0xFFFFFF,
+            12,
+            &lv_font_montserrat_14,
+            appearance_color_selected_cb,
+            i
+        );
+        lv_obj_set_style_border_width(swatch, i == theme_index ? 3 : 0, LV_PART_MAIN);
+        lv_obj_set_style_border_color(swatch, color(theme_text()), LV_PART_MAIN);
+    }
+}
+
+static void create_header(void)
+{
+    lv_obj_t * header = make_panel(
+        app_root, 0, 0, display_width, HEADER_HEIGHT, theme_bg(), 0
+    );
+
+    lv_obj_t * logo = make_panel(header, 12, 9, 40, 40, 0xFF4F98, 20);
+    lv_obj_set_style_bg_grad_color(logo, color(0xFF8A3D), LV_PART_MAIN);
+    lv_obj_set_style_bg_grad_dir(logo, LV_GRAD_DIR_VER, LV_PART_MAIN);
+    lv_obj_t * logo_text = lv_label_create(logo);
+    lv_label_set_text(logo_text, "硅");
+    lv_obj_center(logo_text);
+    text_style(logo_text, &waferlog_font_16, 0x121318);
+
+    lv_obj_t * title = lv_label_create(header);
+    lv_label_set_text(title, "硅笺 | WaferLog");
+    lv_obj_set_pos(title, 60, 8);
+    text_style(title, &waferlog_font_16, theme_text());
+
+    header_clock_label = lv_label_create(header);
+    lv_obj_set_pos(header_clock_label, 60, 31);
+    text_style(header_clock_label, &lv_font_montserrat_12, theme_muted());
+    update_clock();
+
+    static const char * language_codes[] = {"EN", "中", "日", "FR", "RU"};
+    lv_obj_t * language = make_button(
+        header,
+        display_width - 132,
+        10,
+        36,
+        38,
+        language_codes[language_index],
+        theme_accent_soft(),
+        theme_accent(),
+        10,
+        &waferlog_font_14,
+        language_open_clicked_cb,
+        0U
+    );
+    language_label = lv_obj_get_child(language, 0);
+
+    make_button(
+        header,
+        display_width - 90,
+        10,
+        36,
+        38,
+        LV_SYMBOL_TINT,
+        theme_surface(),
+        theme_text(),
+        10,
+        &lv_font_montserrat_16,
+        appearance_open_clicked_cb,
+        0U
+    );
+    make_button(
+        header,
+        display_width - 48,
+        10,
+        36,
+        38,
+        LV_SYMBOL_REFRESH,
+        theme_surface(),
+        theme_text(),
+        10,
+        &lv_font_montserrat_16,
+        rotate_clicked_cb,
+        0U
+    );
+}
+
+static void create_footer(void)
+{
+    lv_obj_t * footer = make_panel(
+        app_root,
+        0,
+        display_height - footer_height,
+        display_width,
+        footer_height,
+        theme_bg(),
+        0
+    );
+
+    int32_t capsule_height = is_landscape ? 44 : 52;
+    int32_t capsule_width = is_landscape ? 300 : display_width - 32;
+    lv_obj_t * capsule = make_panel(
+        footer,
+        (display_width - capsule_width) / 2,
+        (footer_height - capsule_height) / 2 - 1,
+        capsule_width,
+        capsule_height,
+        0x111318,
+        18
+    );
+
+    static const char * icons[] = {
+        LV_SYMBOL_EDIT,
+        LV_SYMBOL_LIST,
+        LV_SYMBOL_HOME
+    };
+    int32_t item_size = is_landscape ? 34 : 40;
+    int32_t slot = capsule_width / 3;
+    for(uint32_t i = 0; i < 3; i++) {
+        nav_buttons[i] = make_button(
+            capsule,
+            (int32_t)i * slot + (slot - item_size) / 2,
+            (capsule_height - item_size) / 2,
+            item_size,
+            item_size,
+            icons[i],
+            0xFFFFFF,
+            0x8E949D,
+            item_size / 2,
+            &lv_font_montserrat_16,
+            nav_clicked_cb,
+            i
+        );
+    }
+    navigation_update();
 }
 
 void waferlog_ui_create(void)
@@ -781,143 +1679,57 @@ void waferlog_ui_create(void)
     display_width = lv_display_get_horizontal_resolution(lv_display_get_default());
     display_height = lv_display_get_vertical_resolution(lv_display_get_default());
     is_landscape = display_width > display_height;
-    main_header_height = is_landscape ? LANDSCAPE_HEADER_HEIGHT : PORTRAIT_HEADER_HEIGHT;
-    main_footer_height = is_landscape ? LANDSCAPE_FOOTER_HEIGHT : PORTRAIT_FOOTER_HEIGHT;
-    home_tab = NULL;
-    calendar_tab = NULL;
-
-    lv_obj_set_style_bg_color(screen, color(COLOR_BACKGROUND), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(screen, LV_OPA_COVER, LV_PART_MAIN);
-
-    main_header = lv_obj_create(screen);
-    lv_obj_remove_style_all(main_header);
-    lv_obj_set_size(main_header, display_width, main_header_height);
-    lv_obj_set_style_bg_color(main_header, color(COLOR_WHITE), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(main_header, LV_OPA_COVER, LV_PART_MAIN);
-
-    lv_obj_t * title = lv_label_create(main_header);
-    lv_label_set_text(title, "WaferLog");
-    lv_obj_set_pos(title, 16, is_landscape ? 9 : 12);
-    text_style(title, &lv_font_montserrat_20, COLOR_INK);
-
-    lv_obj_t * brand = lv_label_create(main_header);
-    lv_label_set_text(brand, is_landscape ? "硅笺" : "硅笺 · 本地工作区");
-    lv_obj_set_pos(brand, 16, is_landscape ? 34 : 40);
-    text_style(brand, &waferlog_font_16, COLOR_TEAL);
-
-    if(is_landscape) {
-        lv_obj_t * settings_button = lv_button_create(main_header);
-        lv_obj_set_pos(settings_button, display_width - 214, 10);
-        lv_obj_set_size(settings_button, 34, 34);
-        lv_obj_set_style_radius(settings_button, 17, LV_PART_MAIN);
-        lv_obj_set_style_border_width(settings_button, 0, LV_PART_MAIN);
-        lv_obj_set_style_bg_color(settings_button, color(COLOR_TEAL_PALE), LV_PART_MAIN);
-        lv_obj_add_event_cb(settings_button, settings_navigation_clicked_cb, LV_EVENT_CLICKED, NULL);
-        lv_obj_t * settings_icon = lv_label_create(settings_button);
-        lv_label_set_text(settings_icon, LV_SYMBOL_SETTINGS);
-        lv_obj_center(settings_icon);
-        text_style(settings_icon, &lv_font_montserrat_16, COLOR_TEAL);
-
-        home_tab = lv_button_create(main_header);
-        lv_obj_set_pos(home_tab, display_width - 146, 10);
-        lv_obj_set_size(home_tab, 60, 34);
-        lv_obj_set_style_radius(home_tab, 17, LV_PART_MAIN);
-        lv_obj_set_style_border_width(home_tab, 0, LV_PART_MAIN);
-        lv_obj_add_event_cb(home_tab, tab_clicked_cb, LV_EVENT_CLICKED, (void *)1U);
-        lv_obj_t * home_label = lv_label_create(home_tab);
-        lv_label_set_text(home_label, "首页");
-        lv_obj_center(home_label);
-        text_style(home_label, &waferlog_font_16, COLOR_MUTED);
-
-        calendar_tab = lv_button_create(main_header);
-        lv_obj_set_pos(calendar_tab, display_width - 78, 10);
-        lv_obj_set_size(calendar_tab, 62, 34);
-        lv_obj_set_style_radius(calendar_tab, 17, LV_PART_MAIN);
-        lv_obj_set_style_border_width(calendar_tab, 0, LV_PART_MAIN);
-        lv_obj_add_event_cb(calendar_tab, tab_clicked_cb, LV_EVENT_CLICKED, (void *)2U);
-        lv_obj_t * calendar_label = lv_label_create(calendar_tab);
-        lv_label_set_text(calendar_label, "日历");
-        lv_obj_center(calendar_label);
-        text_style(calendar_label, &waferlog_font_16, COLOR_MUTED);
-    }
-    else {
-        lv_obj_t * local_badge = lv_obj_create(main_header);
-        lv_obj_remove_style_all(local_badge);
-        lv_obj_set_pos(local_badge, display_width - 72, 20);
-        lv_obj_set_size(local_badge, 56, 30);
-        lv_obj_set_style_radius(local_badge, 15, LV_PART_MAIN);
-        lv_obj_set_style_bg_color(local_badge, color(COLOR_TEAL_PALE), LV_PART_MAIN);
-        lv_obj_t * local_label = lv_label_create(local_badge);
-        lv_label_set_text(local_label, "LOCAL");
-        lv_obj_center(local_label);
-        text_style(local_label, &lv_font_montserrat_12, COLOR_TEAL);
-    }
-
-    content_view = lv_obj_create(screen);
-    lv_obj_remove_style_all(content_view);
-    lv_obj_set_pos(content_view, 0, main_header_height);
-    lv_obj_set_size(content_view, display_width, display_height - main_header_height - main_footer_height);
-    lv_obj_set_style_bg_color(content_view, color(COLOR_BACKGROUND), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(content_view, LV_OPA_COVER, LV_PART_MAIN);
-    lv_obj_set_scrollbar_mode(content_view, LV_SCROLLBAR_MODE_OFF);
-
-    main_footer = lv_obj_create(screen);
-    lv_obj_remove_style_all(main_footer);
-    lv_obj_set_pos(main_footer, 0, display_height - main_footer_height);
-    lv_obj_set_size(main_footer, display_width, main_footer_height);
-    lv_obj_set_style_bg_color(main_footer, color(is_landscape ? COLOR_DARK : COLOR_BACKGROUND), LV_PART_MAIN);
-    lv_obj_set_style_bg_opa(main_footer, LV_OPA_COVER, LV_PART_MAIN);
-
-    if(is_landscape) {
-        status_label = lv_label_create(main_footer);
-        lv_label_set_text(status_label, "WaferLog · 本地模式");
-        lv_obj_set_pos(status_label, 16, 13);
-        text_style(status_label, &waferlog_font_16, COLOR_WHITE);
-
-        lv_obj_t * status_right = lv_label_create(main_footer);
-        lv_label_set_text(status_right, "SYNC OFFLINE");
-        lv_obj_set_pos(status_right, display_width - 106, 16);
-        text_style(status_right, &lv_font_montserrat_12, 0xB9E5E2);
-    }
-    else {
-        status_label = lv_label_create(main_footer);
-        lv_obj_add_flag(status_label, LV_OBJ_FLAG_HIDDEN);
-
-        lv_obj_t * navigation = lv_obj_create(main_footer);
-        lv_obj_remove_style_all(navigation);
-        lv_obj_set_pos(navigation, 12, 4);
-        lv_obj_set_size(navigation, display_width - 24, 48);
-        lv_obj_set_style_radius(navigation, 18, LV_PART_MAIN);
-        lv_obj_set_style_bg_color(navigation, color(COLOR_DARK), LV_PART_MAIN);
-
-        static const char * navigation_icons[] = {
-            LV_SYMBOL_HOME,
-            LV_SYMBOL_EDIT,
-            LV_SYMBOL_LIST,
-            LV_SYMBOL_SETTINGS
-        };
-
-        for(uint32_t i = 0; i < 4; i++) {
-            lv_obj_t * item = lv_button_create(navigation);
-            lv_obj_set_pos(item, 18 + (int32_t)i * 70, 6);
-            lv_obj_set_size(item, 40, 36);
-            lv_obj_set_style_radius(item, 18, LV_PART_MAIN);
-            lv_obj_set_style_border_width(item, 0, LV_PART_MAIN);
-            lv_obj_set_style_bg_color(
-                item,
-                color(i == 0 ? COLOR_WHITE : COLOR_DARK),
-                LV_PART_MAIN
-            );
-
-            lv_obj_t * icon = lv_label_create(item);
-            lv_label_set_text(icon, navigation_icons[i]);
-            lv_obj_center(icon);
-            text_style(icon, &lv_font_montserrat_16, i == 0 ? COLOR_DARK : 0xA9C7C5);
-            if(i == 3) {
-                lv_obj_add_event_cb(item, settings_navigation_clicked_cb, LV_EVENT_CLICKED, NULL);
-            }
+    footer_height = is_landscape ? LANDSCAPE_FOOTER_HEIGHT : FOOTER_HEIGHT;
+    if(!note_data_initialized) {
+        for(uint32_t i = 0; i < NOTE_PAGE_COUNT; i++) {
+            note_pages[i].paper = PAPER_RULED;
         }
+        note_data_initialized = true;
     }
 
-    render_home();
+    if(clock_timer != NULL) {
+        lv_timer_delete(clock_timer);
+        clock_timer = NULL;
+    }
+    if(toast_timer != NULL) {
+        lv_timer_delete(toast_timer);
+        toast_timer = NULL;
+    }
+
+    app_root = make_panel(
+        screen,
+        0,
+        0,
+        display_width,
+        display_height,
+        theme_bg(),
+        0
+    );
+    create_header();
+
+    content_view = make_panel(
+        app_root,
+        0,
+        HEADER_HEIGHT,
+        display_width,
+        display_height - HEADER_HEIGHT - footer_height,
+        theme_bg(),
+        0
+    );
+    create_footer();
+
+    toast_label = lv_label_create(app_root);
+    lv_label_set_text(toast_label, "");
+    lv_obj_set_style_bg_color(toast_label, color(dark_mode ? 0xF6F7F8 : 0x121318), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(toast_label, LV_OPA_90, LV_PART_MAIN);
+    lv_obj_set_style_text_color(toast_label, color(dark_mode ? 0x121318 : 0xFFFFFF), LV_PART_MAIN);
+    lv_obj_set_style_text_font(toast_label, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_radius(toast_label, 9, LV_PART_MAIN);
+    lv_obj_set_style_pad_hor(toast_label, 12, LV_PART_MAIN);
+    lv_obj_set_style_pad_ver(toast_label, 8, LV_PART_MAIN);
+    lv_obj_align(toast_label, LV_ALIGN_TOP_MID, 0, HEADER_HEIGHT - 4);
+    lv_obj_add_flag(toast_label, LV_OBJ_FLAG_HIDDEN);
+
+    render_current_page();
+    clock_timer = lv_timer_create(clock_timer_cb, 30000, NULL);
 }

@@ -20,8 +20,8 @@
 int main(int argc, char ** argv)
 {
     bool landscape = argc > 1 && strcmp(argv[1], "--landscape") == 0;
-    int32_t width = landscape ? 480 : 320;
-    int32_t height = landscape ? 320 : 480;
+    int32_t width = landscape ? 640 : 360;
+    int32_t height = landscape ? 360 : 640;
 
     lv_init();
     sdl_hal_init(width, height);

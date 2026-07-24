@@ -46,6 +46,11 @@ bool waferlog_wifi_is_connected(void)
     return wifi_connected;
 }
 
+bool waferlog_note_upload(void)
+{
+    return wifi_connected;
+}
+
 bool waferlog_ble_enable(void)
 {
     ble_enabled = true;
