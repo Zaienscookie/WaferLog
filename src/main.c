@@ -14,6 +14,7 @@
 
 #include "lvgl/lvgl.h"
 #include "hal/hal.h"
+#include "hal/waferlog_services.h"
 #include "waferlog_ui.h"
 
 int main(int argc, char ** argv)
@@ -24,6 +25,7 @@ int main(int argc, char ** argv)
 
     lv_init();
     sdl_hal_init(width, height);
+    waferlog_services_init();
     waferlog_ui_create();
 
     while(1) {

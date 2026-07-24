@@ -5,6 +5,7 @@
 #include <time.h>
 
 #include "lvgl/lvgl.h"
+#include "hal/waferlog_services.h"
 
 LV_FONT_DECLARE(waferlog_font_14);
 LV_FONT_DECLARE(waferlog_font_16);
@@ -107,6 +108,7 @@ static void update_tabs(bool calendar_active)
 static void render_home(void);
 static void render_calendar(void);
 static void render_note_editor(void);
+static void render_settings(void);
 
 static void set_note_fullscreen(bool active)
 {
@@ -226,11 +228,58 @@ static void action_clicked_cb(lv_event_t * event)
         render_note_editor();
     }
     else if(action == 2U) {
-        set_status("录音入口已准备");
+        if(waferlog_recording_is_active()) {
+            waferlog_recording_stop();
+            set_status("录音已停止");
+        }
+        else if(waferlog_recording_start()) {
+            set_status("录音模拟中");
+        }
     }
     else {
         set_status("图片入口已准备");
     }
+}
+
+static void service_button_clicked_cb(lv_event_t * event)
+{
+    uintptr_t action = (uintptr_t)lv_event_get_user_data(event);
+    if(action == 10U) {
+        if(waferlog_wifi_is_connected()) {
+            waferlog_wifi_disconnect();
+        }
+        else {
+            waferlog_wifi_connect("WaferLog-Demo", "12345678");
+        }
+        render_settings();
+    }
+    else if(action == 11U) {
+        if(waferlog_ble_is_enabled()) {
+            waferlog_ble_disable();
+        }
+        else {
+            waferlog_ble_enable();
+        }
+        render_settings();
+    }
+    else if(action == 12U) {
+        if(waferlog_recording_is_active()) {
+            waferlog_recording_stop();
+        }
+        else {
+            waferlog_recording_start();
+        }
+        render_settings();
+    }
+    else {
+        render_home();
+    }
+}
+
+static void settings_navigation_clicked_cb(lv_event_t * event)
+{
+    LV_UNUSED(event);
+    render_settings();
 }
 
 static lv_obj_t * make_card(
@@ -452,6 +501,135 @@ static void render_note_editor(void)
     set_status("笔记编辑");
 }
 
+static void add_service_control_card(
+    int32_t x,
+    int32_t y,
+    int32_t width,
+    const char * title,
+    const char * state,
+    bool active,
+    uintptr_t action,
+    const char * inactive_action,
+    const char * active_action
+)
+{
+    int32_t card_height = is_landscape ? 112 : 82;
+    lv_obj_t * card = make_card(content_view, x, y, width, card_height, COLOR_WHITE, COLOR_BORDER);
+
+    lv_obj_t * title_label = lv_label_create(card);
+    lv_label_set_text(title_label, title);
+    lv_obj_set_pos(title_label, is_landscape ? 12 : 16, is_landscape ? 10 : 13);
+    text_style(
+        title_label,
+        is_landscape ? &lv_font_montserrat_12 : &lv_font_montserrat_20,
+        COLOR_INK
+    );
+
+    lv_obj_t * state_label = lv_label_create(card);
+    lv_label_set_text(state_label, state);
+    lv_obj_set_pos(state_label, is_landscape ? 12 : 16, is_landscape ? 34 : 47);
+    text_style(
+        state_label,
+        &lv_font_montserrat_12,
+        active ? (action == 12U ? COLOR_PINK : COLOR_TEAL) : COLOR_MUTED
+    );
+
+    lv_obj_t * button = lv_button_create(card);
+    lv_obj_set_pos(
+        button,
+        is_landscape ? 12 : width - 102,
+        is_landscape ? 62 : 20
+    );
+    lv_obj_set_size(button, is_landscape ? width - 24 : 96, is_landscape ? 38 : 42);
+    lv_obj_set_style_radius(button, 14, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(
+        button,
+        color(active ? COLOR_PINK : (action == 12U ? COLOR_YELLOW : COLOR_TEAL)),
+        LV_PART_MAIN
+    );
+    lv_obj_add_event_cb(button, service_button_clicked_cb, LV_EVENT_CLICKED, (void *)action);
+
+    lv_obj_t * button_label = lv_label_create(button);
+    lv_label_set_text(button_label, active ? active_action : inactive_action);
+    lv_obj_center(button_label);
+    text_style(
+        button_label,
+        &lv_font_montserrat_12,
+        !active && action == 12U ? COLOR_INK : COLOR_WHITE
+    );
+}
+
+static void render_settings(void)
+{
+    set_note_fullscreen(false);
+    lv_obj_clean(content_view);
+    update_tabs(false);
+
+    lv_obj_t * title = lv_label_create(content_view);
+    lv_label_set_text(title, "DEVICE SERVICES");
+    lv_obj_set_pos(title, 16, is_landscape ? 8 : 14);
+    text_style(title, is_landscape ? &lv_font_montserrat_16 : &lv_font_montserrat_20, COLOR_INK);
+
+    lv_obj_t * subtitle = lv_label_create(content_view);
+    lv_label_set_text(subtitle, "Windows simulator state");
+    lv_obj_set_pos(subtitle, is_landscape ? 190 : 16, is_landscape ? 11 : 42);
+    text_style(subtitle, &lv_font_montserrat_12, COLOR_MUTED);
+
+    int32_t card_width = is_landscape ? (display_width - 36) / 3 : display_width - 24;
+    int32_t card_y = is_landscape ? 44 : 72;
+    int32_t card_gap = is_landscape ? 6 : 10;
+    add_service_control_card(
+        12,
+        card_y,
+        card_width,
+        "Wi-Fi",
+        waferlog_wifi_is_connected() ? "CONNECTED" : "DISCONNECTED",
+        waferlog_wifi_is_connected(),
+        10U,
+        "CONNECT",
+        "DISCONNECT"
+    );
+    add_service_control_card(
+        12 + card_width + card_gap,
+        is_landscape ? card_y : 164,
+        card_width,
+        "BLUETOOTH",
+        waferlog_ble_is_enabled() ? "ENABLED" : "DISABLED",
+        waferlog_ble_is_enabled(),
+        11U,
+        "ENABLE",
+        "DISABLE"
+    );
+    add_service_control_card(
+        12 + (card_width + card_gap) * 2,
+        is_landscape ? card_y : 256,
+        card_width,
+        "AUDIO RECORDING",
+        waferlog_recording_is_active() ? "RECORDING" : "READY",
+        waferlog_recording_is_active(),
+        12U,
+        "START",
+        "STOP"
+    );
+
+    lv_obj_t * back_button = lv_button_create(content_view);
+    lv_obj_set_pos(
+        back_button,
+        12,
+        display_height - main_header_height - main_footer_height - (is_landscape ? 42 : 52)
+    );
+    lv_obj_set_size(back_button, 92, is_landscape ? 32 : 40);
+    lv_obj_set_style_radius(back_button, 14, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(back_button, color(COLOR_DARK), LV_PART_MAIN);
+    lv_obj_add_event_cb(back_button, service_button_clicked_cb, LV_EVENT_CLICKED, (void *)13U);
+    lv_obj_t * back_label = lv_label_create(back_button);
+    lv_label_set_text(back_label, "BACK");
+    lv_obj_center(back_label);
+    text_style(back_label, &lv_font_montserrat_12, COLOR_WHITE);
+
+    set_status("DEVICE SERVICES");
+}
+
 static void render_landscape_home(void)
 {
     lv_obj_t * title = lv_label_create(content_view);
@@ -628,6 +806,18 @@ void waferlog_ui_create(void)
     text_style(brand, &waferlog_font_16, COLOR_TEAL);
 
     if(is_landscape) {
+        lv_obj_t * settings_button = lv_button_create(main_header);
+        lv_obj_set_pos(settings_button, display_width - 214, 10);
+        lv_obj_set_size(settings_button, 34, 34);
+        lv_obj_set_style_radius(settings_button, 17, LV_PART_MAIN);
+        lv_obj_set_style_border_width(settings_button, 0, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(settings_button, color(COLOR_TEAL_PALE), LV_PART_MAIN);
+        lv_obj_add_event_cb(settings_button, settings_navigation_clicked_cb, LV_EVENT_CLICKED, NULL);
+        lv_obj_t * settings_icon = lv_label_create(settings_button);
+        lv_label_set_text(settings_icon, LV_SYMBOL_SETTINGS);
+        lv_obj_center(settings_icon);
+        text_style(settings_icon, &lv_font_montserrat_16, COLOR_TEAL);
+
         home_tab = lv_button_create(main_header);
         lv_obj_set_pos(home_tab, display_width - 146, 10);
         lv_obj_set_size(home_tab, 60, 34);
@@ -723,6 +913,9 @@ void waferlog_ui_create(void)
             lv_label_set_text(icon, navigation_icons[i]);
             lv_obj_center(icon);
             text_style(icon, &lv_font_montserrat_16, i == 0 ? COLOR_DARK : 0xA9C7C5);
+            if(i == 3) {
+                lv_obj_add_event_cb(item, settings_navigation_clicked_cb, LV_EVENT_CLICKED, NULL);
+            }
         }
     }
 
