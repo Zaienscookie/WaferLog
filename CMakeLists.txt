@@ -46,6 +46,7 @@ add_executable(waferlog
     src/fonts/waferlog_font_14.c
     src/fonts/waferlog_font_16.c
     src/hal/hal.c
+    src/hal/waferlog_services.c
     src/mouse_cursor_icon.c
 )
 
