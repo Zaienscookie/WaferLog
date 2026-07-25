@@ -6,17 +6,28 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef WAFERLOG_T5AI
+#include "lvgl.h"
+#else
 #include "lvgl/lvgl.h"
+#endif
 #include "hal/waferlog_services.h"
 
+#ifdef WAFERLOG_T5AI
+#define waferlog_font_14 lv_font_montserrat_14
+#define waferlog_font_16 lv_font_montserrat_16
+#else
 LV_FONT_DECLARE(waferlog_font_14);
 LV_FONT_DECLARE(waferlog_font_16);
+#endif
 
 #define HEADER_HEIGHT 58
 #define FOOTER_HEIGHT 64
 #define LANDSCAPE_FOOTER_HEIGHT 52
 #define NOTE_PAGE_COUNT 12
+#ifndef NOTE_STROKE_LIMIT
 #define NOTE_STROKE_LIMIT 4096
+#endif
 #define NOTE_MIN_SAMPLE_DISTANCE 3
 #define NOTE_CANVAS_MAX_WIDTH 640
 #define NOTE_CANVAS_MAX_HEIGHT 464
@@ -160,6 +171,8 @@ static int32_t display_height;
 static int32_t footer_height;
 static int32_t note_canvas_width;
 static int32_t note_canvas_height;
+static uint8_t * note_canvas_buffer;
+static size_t note_canvas_buffer_size;
 static lv_point_t previous_note_point;
 static uint32_t previous_note_tick;
 static bool wifi_radio_enabled;
@@ -177,15 +190,6 @@ static lv_obj_t * wifi_password_toggle;
 static lv_obj_t * wifi_keyboard;
 static bool wifi_password_required;
 static char wifi_pending_ssid[64];
-static uint8_t note_canvas_buffer[
-    LV_CANVAS_BUF_SIZE(
-        NOTE_CANVAS_MAX_WIDTH,
-        NOTE_CANVAS_MAX_HEIGHT,
-        16,
-        LV_DRAW_BUF_STRIDE_ALIGN
-    )
-];
-
 static void render_current_page(void);
 static void render_note_page(void);
 static void render_calendar_page(void);
@@ -414,6 +418,21 @@ static void toast_hide_cb(lv_timer_t * timer)
     toast_timer = NULL;
 }
 
+static void waferlog_move_foreground(lv_obj_t * object)
+{
+    if(object == NULL) {
+        return;
+    }
+#ifdef WAFERLOG_T5AI
+    lv_obj_t * parent = lv_obj_get_parent(object);
+    if(parent != NULL) {
+        lv_obj_move_to_index(object, lv_obj_get_child_count(parent) - 1);
+    }
+#else
+    lv_obj_move_foreground(object);
+#endif
+}
+
 static void show_toast(const char * message)
 {
     if(toast_label == NULL) {
@@ -421,7 +440,7 @@ static void show_toast(const char * message)
     }
     lv_label_set_text(toast_label, message);
     lv_obj_remove_flag(toast_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(toast_label);
+    waferlog_move_foreground(toast_label);
     if(toast_timer != NULL) {
         lv_timer_delete(toast_timer);
     }
@@ -561,8 +580,13 @@ static void network_close_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
     if(network_overlay != NULL) {
-        lv_obj_delete_async(network_overlay);
+        lv_obj_delete(network_overlay);
         network_overlay = NULL;
+        network_sheet = NULL;
+        network_list = NULL;
+        network_status_label = NULL;
+        network_scan_button = NULL;
+        network_scan_label = NULL;
     }
 }
 
@@ -657,7 +681,7 @@ static void wifi_credentials_close_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
     if(wifi_credentials_overlay != NULL) {
-        lv_obj_delete_async(wifi_credentials_overlay);
+        lv_obj_delete(wifi_credentials_overlay);
         wifi_credentials_overlay = NULL;
     }
     wifi_ssid_input = NULL;
@@ -672,7 +696,7 @@ static void wifi_credentials_input_cb(lv_event_t * event)
     if(wifi_keyboard != NULL) {
         lv_keyboard_set_textarea(wifi_keyboard, target);
         lv_obj_remove_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(wifi_keyboard);
+        waferlog_move_foreground(wifi_keyboard);
     }
 }
 
@@ -802,17 +826,13 @@ static void show_network_overlay(bool bluetooth_tab)
         }
         waferlog_ble_scan();
     }
-    else {
-        wifi_radio_enabled = true;
-        waferlog_wifi_scan();
-    }
 
     int32_t sheet_height = is_landscape ? 286 : 430;
     network_overlay = make_panel(
         app_root, 0, 0, display_width, display_height, 0x000000, 0
     );
     lv_obj_set_style_bg_opa(network_overlay, LV_OPA_40, LV_PART_MAIN);
-    lv_obj_move_foreground(network_overlay);
+    waferlog_move_foreground(network_overlay);
     network_sheet = make_panel(
         network_overlay,
         is_landscape ? (display_width - 460) / 2 : 0,
@@ -883,14 +903,18 @@ static void show_wifi_credentials(const char * ssid, bool password_required)
         return;
     }
     wifi_password_required = password_required;
-    lv_strlcpy(wifi_pending_ssid, ssid != NULL ? ssid : "",
-               sizeof(wifi_pending_ssid));
+    snprintf(
+        wifi_pending_ssid,
+        sizeof(wifi_pending_ssid),
+        "%s",
+        ssid != NULL ? ssid : ""
+    );
     int32_t sheet_height = is_landscape ? 250 : 330;
     wifi_credentials_overlay = make_panel(
         app_root, 0, 0, display_width, display_height, 0x000000, 0
     );
     lv_obj_set_style_bg_opa(wifi_credentials_overlay, LV_OPA_40, LV_PART_MAIN);
-    lv_obj_move_foreground(wifi_credentials_overlay);
+    waferlog_move_foreground(wifi_credentials_overlay);
     lv_obj_t * sheet = make_panel(
         wifi_credentials_overlay,
         is_landscape ? (display_width - 460) / 2 : 0,
@@ -1064,6 +1088,18 @@ static void note_draw_stroke_pixels(const note_stroke_t * stroke)
     }
 }
 
+static void note_flush_canvas(void)
+{
+#ifndef WAFERLOG_T5AI
+    if(note_canvas != NULL) {
+        lv_draw_buf_flush_cache(lv_canvas_get_draw_buf(note_canvas), NULL);
+    }
+#endif
+    if(note_canvas != NULL) {
+        lv_obj_invalidate(note_canvas);
+    }
+}
+
 static void note_redraw_canvas(void)
 {
     note_draw_paper();
@@ -1076,7 +1112,7 @@ static void note_redraw_canvas(void)
             note_draw_stroke_pixels(&page->strokes[i]);
         }
     }
-    lv_draw_buf_flush_cache(lv_canvas_get_draw_buf(note_canvas), NULL);
+    note_flush_canvas();
     lv_obj_invalidate(note_canvas);
 }
 
@@ -1154,8 +1190,7 @@ static void note_canvas_event_cb(lv_event_t * event)
     stroke->width = (uint8_t)stroke_width;
     stroke->color_index = eraser_enabled ? UINT8_MAX : note_color_index;
     note_draw_stroke_pixels(stroke);
-    lv_draw_buf_flush_cache(lv_canvas_get_draw_buf(note_canvas), NULL);
-    lv_obj_invalidate(note_canvas);
+    note_flush_canvas();
 
     previous_note_point = point;
     previous_note_tick = lv_tick_get();
@@ -1432,6 +1467,25 @@ static void render_note_page(void)
     note_canvas_width = LV_MIN(note_canvas_width, NOTE_CANVAS_MAX_WIDTH);
     note_canvas_height = LV_MIN(note_canvas_height, NOTE_CANVAS_MAX_HEIGHT);
 
+    size_t canvas_buffer_size = LV_CANVAS_BUF_SIZE(
+        note_canvas_width,
+        note_canvas_height,
+        16,
+        LV_DRAW_BUF_STRIDE_ALIGN
+    );
+    if(note_canvas_buffer_size < canvas_buffer_size) {
+        if(note_canvas_buffer != NULL) {
+            lv_free(note_canvas_buffer);
+            note_canvas_buffer = NULL;
+            note_canvas_buffer_size = 0;
+        }
+        note_canvas_buffer = lv_malloc(canvas_buffer_size);
+        if(note_canvas_buffer == NULL) {
+            return;
+        }
+        note_canvas_buffer_size = canvas_buffer_size;
+    }
+
     note_canvas = lv_canvas_create(content_view);
     lv_canvas_set_buffer(
         note_canvas,
@@ -1518,7 +1572,7 @@ static void make_home_geometry(lv_obj_t * hero, int32_t hero_width)
         recording_clicked_cb,
         0U
     );
-    lv_obj_move_foreground(record);
+    waferlog_move_foreground(record);
 }
 
 static lv_obj_t * make_home_tile(
@@ -1936,12 +1990,27 @@ static void render_calendar_page(void)
     lv_obj_t * calendar = lv_calendar_create(content_view);
     lv_obj_set_pos(calendar, calendar_x, calendar_y);
     lv_obj_set_size(calendar, calendar_width, calendar_height);
+#if LVGL_VERSION_MAJOR >= 9
+    lv_calendar_set_today_date(
+        calendar,
+        local_time.tm_year + 1900,
+        local_time.tm_mon + 1,
+        local_time.tm_mday
+    );
+    lv_calendar_set_showed_date(
+        calendar,
+        local_time.tm_year + 1900,
+        local_time.tm_mon + 1
+    );
+    lv_calendar_header_arrow_create(calendar);
+#else
     lv_calendar_set_today_year(calendar, local_time.tm_year + 1900);
     lv_calendar_set_today_month(calendar, local_time.tm_mon + 1);
     lv_calendar_set_today_day(calendar, local_time.tm_mday);
     lv_calendar_set_shown_year(calendar, local_time.tm_year + 1900);
     lv_calendar_set_shown_month(calendar, local_time.tm_mon + 1);
     lv_calendar_add_header_arrow(calendar);
+#endif
     lv_obj_set_style_bg_color(calendar, color(theme_surface()), LV_PART_MAIN);
     lv_obj_set_style_text_color(calendar, color(theme_text()), LV_PART_MAIN);
     lv_obj_set_style_text_font(calendar, &lv_font_montserrat_14, LV_PART_MAIN);
@@ -2045,19 +2114,18 @@ static void overlay_close_clicked_cb(lv_event_t * event)
 {
     lv_obj_t * overlay = lv_event_get_user_data(event);
     if(overlay != NULL) {
-        lv_obj_delete_async(overlay);
+        lv_obj_delete(overlay);
     }
 }
 
 static void language_selected_cb(lv_event_t * event)
 {
     language_index = (uint8_t)(uintptr_t)lv_event_get_user_data(event);
-    static const char * codes[] = {"EN", "中", "日", "FR", "RU"};
     lv_obj_t * overlay = lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target_obj(event)));
-    lv_obj_delete_async(overlay);
-    if(language_label != NULL) {
-        lv_label_set_text(language_label, codes[language_index]);
+    if(overlay != NULL) {
+        lv_obj_delete(overlay);
     }
+    language_label = NULL;
     request_rebuild();
 }
 
@@ -2073,7 +2141,7 @@ static lv_obj_t * create_overlay(int32_t sheet_height, const char * title)
         0
     );
     lv_obj_set_style_bg_opa(overlay, LV_OPA_40, LV_PART_MAIN);
-    lv_obj_move_foreground(overlay);
+    waferlog_move_foreground(overlay);
 
     int32_t sheet_width = is_landscape ? LV_MIN(460, display_width) : display_width;
     lv_obj_t * sheet = make_panel(
