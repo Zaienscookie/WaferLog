@@ -630,10 +630,9 @@ static void network_scan_cb(lv_event_t * event)
         waferlog_ble_scan();
     }
     else {
-        if(!wifi_radio_enabled) {
-            wifi_radio_enabled = true;
+        if(wifi_radio_enabled) {
+            waferlog_wifi_scan();
         }
-        waferlog_wifi_scan();
     }
     refresh_network_overlay();
 }
@@ -822,10 +821,9 @@ static void show_network_overlay(bool bluetooth_tab)
         waferlog_ble_scan();
     }
     else {
-        if(!wifi_radio_enabled) {
-            wifi_radio_enabled = true;
+        if(wifi_radio_enabled) {
+            waferlog_wifi_scan();
         }
-        waferlog_wifi_scan();
     }
 
     int32_t sheet_height = is_landscape ? 286 : 430;

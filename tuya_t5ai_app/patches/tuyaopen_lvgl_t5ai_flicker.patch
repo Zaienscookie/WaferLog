@@ -1,0 +1,148 @@
+Exit code: 0
+Wall time: 1 seconds
+Output:
+diff --git a/src/liblvgl/v9/port/lv_port_disp_full_frame.c b/src/liblvgl/v9/port/lv_port_disp_full_frame.c
+index 7fe333b..0a0d83e 100644
+--- a/src/liblvgl/v9/port/lv_port_disp_full_frame.c
++++ b/src/liblvgl/v9/port/lv_port_disp_full_frame.c
+@@ -7,9 +7,11 @@
+ 
+ #include "lv_port_disp_internal.h"
+ 
++#define WAFERLOG_DISABLE_DISPLAY_DMA2D 1
++
+ #if !defined(ENABLE_LVGL_PARTIAL_FLUSH) || (ENABLE_LVGL_PARTIAL_FLUSH != 1)
+ 
+-#if defined(ENABLE_DMA2D) && (ENABLE_DMA2D == 1)
++#if defined(ENABLE_DMA2D) && (ENABLE_DMA2D == 1) && !defined(WAFERLOG_DISABLE_DISPLAY_DMA2D)
+ #include "tal_dma2d.h"
+ 
+ static TAL_DMA2D_HANDLE_T sg_lvgl_dma2d_hdl = NULL;
+@@ -114,14 +116,59 @@ static void __disp_framebuffer_memcpy(TDL_DISP_DEV_INFO_T *dev_info,
+                                       uint8_t *dst_frame, uint8_t *src_frame,
+                                       uint32_t frame_size)
+ {
+-#if defined(ENABLE_DMA2D) && (ENABLE_DMA2D == 1)
++#if defined(ENABLE_DMA2D) && (ENABLE_DMA2D == 1) && !defined(WAFERLOG_DISABLE_DISPLAY_DMA2D)
+     __dma2d_framebuffer_memcpy_async(dev_info, dst_frame, src_frame);
++    tal_dma2d_wait_finish(sg_lvgl_dma2d_hdl, 1000);
+ #else
+     (void)dev_info;
+     memcpy(dst_frame, src_frame, frame_size);
+ #endif
+ }
+ 
++static void __disp_framebuffer_area_memcpy(TDL_DISP_DEV_INFO_T *dev_info,
++                                           uint8_t *dst_frame, uint8_t *src_frame,
++                                           uint32_t frame_size, const lv_area_t *area)
++{
++    if (area == NULL || dev_info->fmt == TUYA_PIXEL_FMT_MONOCHROME ||
++        dev_info->fmt == TUYA_PIXEL_FMT_I2) {
++        __disp_framebuffer_memcpy(dev_info, dst_frame, src_frame, frame_size);
++        return;
++    }
++
++    uint8_t per_pixel_byte = (tdl_disp_get_fmt_bpp(dev_info->fmt) + 7) / 8;
++    int32_t x1 = LV_MAX(area->x1, 0);
++    int32_t y1 = LV_MAX(area->y1, 0);
++    int32_t x2 = LV_MIN(area->x2, (int32_t)dev_info->width - 1);
++    int32_t y2 = LV_MIN(area->y2, (int32_t)dev_info->height - 1);
++
++    if (x1 > x2 || y1 > y2) {
++        return;
++    }
++
++    uint32_t row_bytes = (uint32_t)(x2 - x1 + 1) * per_pixel_byte;
++    uint32_t stride = (uint32_t)dev_info->width * per_pixel_byte;
++    uint32_t offset = ((uint32_t)y1 * dev_info->width + (uint32_t)x1) * per_pixel_byte;
++
++    for (int32_t y = y1; y <= y2; y++) {
++        memcpy(dst_frame + offset, src_frame + offset, row_bytes);
++        offset += stride;
++    }
++}
++
++static void __disp_dirty_area_add(LV_DISP_NODE_T *node, const lv_area_t *area)
++{
++    if (!node->dirty_area_valid) {
++        node->dirty_area = *area;
++        node->dirty_area_valid = true;
++        return;
++    }
++
++    node->dirty_area.x1 = LV_MIN(node->dirty_area.x1, area->x1);
++    node->dirty_area.y1 = LV_MIN(node->dirty_area.y1, area->y1);
++    node->dirty_area.x2 = LV_MAX(node->dirty_area.x2, area->x2);
++    node->dirty_area.y2 = LV_MAX(node->dirty_area.y2, area->y2);
++}
++
+ static void __disp_mono_write_point(uint32_t x, uint32_t y, bool enable,
+                                     TDL_DISP_FRAME_BUFF_T *fb)
+ {
+@@ -189,7 +236,7 @@ static void __disp_fill_display_framebuffer(const lv_area_t *area, uint8_t *px_m
+         if (LV_COLOR_FORMAT_RGB565 == cf && is_swap) {
+             lv_draw_sw_rgb565_swap(px_map, lv_area_get_width(area) * lv_area_get_height(area));
+         }
+-#if defined(ENABLE_DMA2D) && (ENABLE_DMA2D == 1)
++#if defined(ENABLE_DMA2D) && (ENABLE_DMA2D == 1) && !defined(WAFERLOG_DISABLE_DISPLAY_DMA2D)
+         tal_dma2d_wait_finish(sg_lvgl_dma2d_hdl, 1000);
+         __dma2d_drawbuffer_memcpy_syn(area, px_map, cf, fb);
+ #else
+@@ -218,11 +265,7 @@ void lv_port_flush_init(LV_DISP_NODE_T *node)
+ 
+     TUYA_CALL_ERR_LOG(tdl_disp_fb_manage_init(&node->fb_mag));
+ 
+-#if defined(ENABLE_LVGL_DUAL_DISP_BUFF) && (ENABLE_LVGL_DUAL_DISP_BUFF == 1)
+-    disp_fb_num = 2 + (node->dev_info.has_vram ? 0 : 1);
+-#else
+     disp_fb_num = 1 + (node->dev_info.has_vram ? 0 : 1);
+-#endif
+ 
+     for (uint8_t i = 0; i < disp_fb_num; i++) {
+         TUYA_CALL_ERR_LOG(tdl_disp_fb_manage_add(node->fb_mag,
+@@ -231,7 +274,7 @@ void lv_port_flush_init(LV_DISP_NODE_T *node)
+ 
+     node->disp_fb = tdl_disp_get_free_fb(node->fb_mag);
+ 
+-#if defined(ENABLE_DMA2D) && (ENABLE_DMA2D == 1)
++#if defined(ENABLE_DMA2D) && (ENABLE_DMA2D == 1) && !defined(WAFERLOG_DISABLE_DISPLAY_DMA2D)
+     if (NULL == sg_lvgl_dma2d_hdl) {
+         TUYA_CALL_ERR_LOG(tal_dma2d_init(&sg_lvgl_dma2d_hdl));
+     }
+@@ -244,16 +287,19 @@ void lv_port_flush_execute(LV_DISP_NODE_T *node, lv_display_t *disp,
+     lv_color_format_t cf = lv_display_get_color_format(disp);
+ 
+     __disp_fill_display_framebuffer(area, color_ptr, cf, node->disp_fb, node->dev_info.is_swap);
++    __disp_dirty_area_add(node, area);
+ 
+     if (lv_display_flush_is_last(disp)) {
+         tdl_disp_dev_flush(node->dev_hdl, node->disp_fb);
+ 
+         TDL_DISP_FRAME_BUFF_T *next_fb = tdl_disp_get_free_fb(node->fb_mag);
+         if (next_fb && next_fb != node->disp_fb) {
+-            __disp_framebuffer_memcpy(&node->dev_info, next_fb->frame,
+-                                      node->disp_fb->frame, node->disp_fb->len);
++            __disp_framebuffer_area_memcpy(&node->dev_info, next_fb->frame,
++                                           node->disp_fb->frame, node->disp_fb->len,
++                                           node->dirty_area_valid ? &node->dirty_area : NULL);
+             node->disp_fb = next_fb;
+         }
++        node->dirty_area_valid = false;
+     }
+ 
+     lv_display_flush_ready(disp);
+diff --git a/src/liblvgl/v9/port/lv_port_disp_internal.h b/src/liblvgl/v9/port/lv_port_disp_internal.h
+index b88269d..7c056d9 100644
+--- a/src/liblvgl/v9/port/lv_port_disp_internal.h
++++ b/src/liblvgl/v9/port/lv_port_disp_internal.h
+@@ -60,6 +60,8 @@ typedef struct {
+     uint8_t                *buf_2_1;
+     uint8_t                *buf_2_2;
+     uint8_t                *rotate_buf;
++    lv_area_t               dirty_area;
++    bool                    dirty_area_valid;
+     TDL_DISP_FRAME_BUFF_T  *disp_fb;      /* full-frame: current fb from fb_mag */
+     TDL_FB_MANAGE_HANDLE_T  fb_mag;       /* full-frame: fb pool */
+     TDL_DISP_FRAME_BUFF_T   partial_fb;   /* partial: reusable flush descriptor */
+warning: in the working copy of 'src/liblvgl/v9/port/lv_port_disp_full_frame.c', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src/liblvgl/v9/port/lv_port_disp_internal.h', LF will be replaced by CRLF the next time Git touches it
