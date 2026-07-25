@@ -16,7 +16,8 @@ LV_FONT_DECLARE(waferlog_font_16);
 #define FOOTER_HEIGHT 64
 #define LANDSCAPE_FOOTER_HEIGHT 52
 #define NOTE_PAGE_COUNT 12
-#define NOTE_STROKE_LIMIT 768
+#define NOTE_STROKE_LIMIT 4096
+#define NOTE_MIN_SAMPLE_DISTANCE 3
 #define NOTE_CANVAS_MAX_WIDTH 640
 #define NOTE_CANVAS_MAX_HEIGHT 464
 
@@ -205,7 +206,7 @@ static void wifi_credentials_close_cb(lv_event_t * event);
 static void wifi_credentials_input_cb(lv_event_t * event);
 static void wifi_password_toggle_cb(lv_event_t * event);
 static void wifi_credentials_join_cb(lv_event_t * event);
-static void rebuild_create_cb(lv_timer_t * timer);
+static void rebuild_ui_timer_cb(lv_timer_t * timer);
 
 static lv_color_t color(uint32_t rgb)
 {
@@ -954,92 +955,129 @@ static void show_wifi_credentials(const char * ssid, bool password_required)
     lv_obj_add_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
+static void note_set_pixel(int32_t x, int32_t y, lv_color_t pixel)
+{
+    if(note_canvas == NULL ||
+       x < 0 || y < 0 ||
+       x >= note_canvas_width || y >= note_canvas_height) {
+        return;
+    }
+    lv_draw_buf_t * draw_buf = lv_canvas_get_draw_buf(note_canvas);
+    uint8_t * data = draw_buf == NULL
+        ? NULL
+        : lv_draw_buf_goto_xy(draw_buf, (uint32_t)x, (uint32_t)y);
+    if(data != NULL) {
+        lv_color16_t * pixel16 = (lv_color16_t *)data;
+        pixel16->red = pixel.red >> 3;
+        pixel16->green = pixel.green >> 2;
+        pixel16->blue = pixel.blue >> 3;
+    }
+}
+
 static void note_draw_paper(void)
 {
     if(note_canvas == NULL) {
         return;
     }
 
-    lv_canvas_fill_bg(note_canvas, color(dark_mode ? 0x171B21 : 0xFFFFFF), LV_OPA_COVER);
+    lv_canvas_fill_bg(
+        note_canvas,
+        color(dark_mode ? 0x171B21 : 0xFFFFFF),
+        LV_OPA_COVER
+    );
     uint8_t paper = note_pages[note_page_index].paper;
     if(paper == PAPER_BLANK) {
         return;
     }
 
-    lv_layer_t layer;
-    lv_canvas_init_layer(note_canvas, &layer);
-    lv_draw_line_dsc_t line;
-    lv_draw_line_dsc_init(&line);
-    line.color = color(dark_mode ? 0x36404A : 0xDCE7ED);
-    line.width = 1;
-
+    lv_color_t paper_line = color(dark_mode ? 0x36404A : 0xDCE7ED);
     if(paper == PAPER_RULED || paper == PAPER_GRID) {
         for(int32_t y = 36; y < note_canvas_height; y += 36) {
-            line.p1.x = 0;
-            line.p1.y = y;
-            line.p2.x = note_canvas_width - 1;
-            line.p2.y = y;
-            lv_draw_line(&layer, &line);
+            for(int32_t x = 0; x < note_canvas_width; x++) {
+                note_set_pixel(x, y, paper_line);
+            }
         }
     }
     if(paper == PAPER_GRID) {
         for(int32_t x = 36; x < note_canvas_width; x += 36) {
-            line.p1.x = x;
-            line.p1.y = 0;
-            line.p2.x = x;
-            line.p2.y = note_canvas_height - 1;
-            lv_draw_line(&layer, &line);
+            for(int32_t y = 0; y < note_canvas_height; y++) {
+                note_set_pixel(x, y, paper_line);
+            }
         }
     }
     if(paper == PAPER_DOTS) {
         for(int32_t y = 24; y < note_canvas_height; y += 24) {
             for(int32_t x = 24; x < note_canvas_width; x += 24) {
-                line.p1.x = x;
-                line.p1.y = y;
-                line.p2.x = x + 1;
-                line.p2.y = y;
-                lv_draw_line(&layer, &line);
+                note_set_pixel(x, y, paper_line);
             }
         }
     }
-    lv_canvas_finish_layer(note_canvas, &layer);
 }
 
-static void note_draw_stroke(const note_stroke_t * stroke)
+static uint32_t note_stroke_color(const note_stroke_t * stroke)
+{
+    if(stroke->color_index == UINT8_MAX) {
+        return dark_mode ? 0x171B21 : 0xFFFFFF;
+    }
+    if(dark_mode && stroke->color_index == 0) {
+        return 0xE8EEF4;
+    }
+    return ink_colors[stroke->color_index % 4];
+}
+
+static void note_draw_stroke_pixels(const note_stroke_t * stroke)
 {
     if(note_canvas == NULL || stroke == NULL) {
         return;
     }
 
-    lv_layer_t layer;
-    lv_canvas_init_layer(note_canvas, &layer);
-    lv_draw_line_dsc_t line;
-    lv_draw_line_dsc_init(&line);
-    uint32_t ink_color = stroke->color_index == UINT8_MAX
-        ? (dark_mode ? 0x171B21 : 0xFFFFFF)
-        : ink_colors[stroke->color_index % 4];
-    if(!eraser_enabled && dark_mode && stroke->color_index == 0) {
-        ink_color = 0xE8EEF4;
+    const lv_color_t pixel = color(note_stroke_color(stroke));
+    int32_t x = stroke->x1;
+    int32_t y = stroke->y1;
+    int32_t dx = LV_ABS(stroke->x2 - stroke->x1);
+    int32_t sx = stroke->x1 < stroke->x2 ? 1 : -1;
+    int32_t dy = -LV_ABS(stroke->y2 - stroke->y1);
+    int32_t sy = stroke->y1 < stroke->y2 ? 1 : -1;
+    int32_t error = dx + dy;
+    int32_t radius = LV_MAX(0, (int32_t)stroke->width / 2);
+
+    while(true) {
+        for(int32_t oy = -radius; oy <= radius; oy++) {
+            for(int32_t ox = -radius; ox <= radius; ox++) {
+                if(ox * ox + oy * oy <= radius * radius) {
+                    note_set_pixel(x + ox, y + oy, pixel);
+                }
+            }
+        }
+        if(x == stroke->x2 && y == stroke->y2) {
+            break;
+        }
+        int32_t twice_error = 2 * error;
+        if(twice_error >= dy) {
+            error += dy;
+            x += sx;
+        }
+        if(twice_error <= dx) {
+            error += dx;
+            y += sy;
+        }
     }
-    line.color = color(ink_color);
-    line.width = stroke->width;
-    line.round_start = 1;
-    line.round_end = 1;
-    line.p1.x = stroke->x1;
-    line.p1.y = stroke->y1;
-    line.p2.x = stroke->x2;
-    line.p2.y = stroke->y2;
-    lv_draw_line(&layer, &line);
-    lv_canvas_finish_layer(note_canvas, &layer);
 }
 
 static void note_redraw_canvas(void)
 {
     note_draw_paper();
     note_page_t * page = &note_pages[note_page_index];
-    for(uint32_t i = 0; i < page->stroke_count; i++) {
-        note_draw_stroke(&page->strokes[i]);
+    if(note_canvas == NULL) {
+        return;
     }
+    if(page->stroke_count > 0) {
+        for(uint32_t i = 0; i < page->stroke_count; i++) {
+            note_draw_stroke_pixels(&page->strokes[i]);
+        }
+    }
+    lv_draw_buf_flush_cache(lv_canvas_get_draw_buf(note_canvas), NULL);
+    lv_obj_invalidate(note_canvas);
 }
 
 static void note_canvas_event_cb(lv_event_t * event)
@@ -1067,6 +1105,11 @@ static void note_canvas_event_cb(lv_event_t * event)
     lv_indev_get_point(indev, &point);
     lv_area_t area;
     lv_obj_get_coords(note_canvas, &area);
+    if(point.x < area.x1 || point.x > area.x2 ||
+       point.y < area.y1 || point.y > area.y2) {
+        note_stroke_active = false;
+        return;
+    }
     point.x -= area.x1;
     point.y -= area.y1;
     point.x = LV_CLAMP(0, point.x, note_canvas_width - 1);
@@ -1086,7 +1129,7 @@ static void note_canvas_event_cb(lv_event_t * event)
     int32_t distance =
         LV_ABS(point.x - previous_note_point.x) +
         LV_ABS(point.y - previous_note_point.y);
-    if(distance == 0) {
+    if(distance < NOTE_MIN_SAMPLE_DISTANCE) {
         return;
     }
     int32_t speed = elapsed > 0 ? distance * 10 / (int32_t)elapsed : distance * 10;
@@ -1110,7 +1153,9 @@ static void note_canvas_event_cb(lv_event_t * event)
     stroke->y2 = (int16_t)point.y;
     stroke->width = (uint8_t)stroke_width;
     stroke->color_index = eraser_enabled ? UINT8_MAX : note_color_index;
-    note_draw_stroke(stroke);
+    note_draw_stroke_pixels(stroke);
+    lv_draw_buf_flush_cache(lv_canvas_get_draw_buf(note_canvas), NULL);
+    lv_obj_invalidate(note_canvas);
 
     previous_note_point = point;
     previous_note_tick = lv_tick_get();
@@ -1329,7 +1374,7 @@ static void render_note_page(void)
                 24,
                 24,
                 "",
-                ink_colors[i],
+                dark_mode && i == 0 ? 0xE8EEF4 : ink_colors[i],
                 0xFFFFFF,
                 12,
                 &lv_font_montserrat_12,
@@ -1920,15 +1965,9 @@ static void render_current_page(void)
     }
 }
 
-static void rebuild_create_cb(lv_timer_t * timer)
+static void rebuild_ui_timer_cb(lv_timer_t * timer)
 {
-    LV_UNUSED(timer);
-    waferlog_ui_create();
-}
-
-static void rebuild_ui_async(void * user_data)
-{
-    LV_UNUSED(user_data);
+    lv_timer_delete(timer);
     rebuild_pending = false;
     if(clock_timer != NULL) {
         lv_timer_delete(clock_timer);
@@ -1939,7 +1978,7 @@ static void rebuild_ui_async(void * user_data)
         toast_timer = NULL;
     }
     if(app_root != NULL) {
-        lv_obj_delete_async(app_root);
+        lv_obj_delete(app_root);
         app_root = NULL;
     }
     content_view = NULL;
@@ -1961,12 +2000,7 @@ static void rebuild_ui_async(void * user_data)
     for(uint32_t i = 0; i < 3; i++) {
         nav_buttons[i] = NULL;
     }
-    lv_timer_t * timer = lv_timer_create(
-        rebuild_create_cb,
-        1,
-        NULL
-    );
-    lv_timer_set_repeat_count(timer, 1);
+    waferlog_ui_create();
 }
 
 static void request_rebuild(void)
@@ -1975,7 +2009,7 @@ static void request_rebuild(void)
         return;
     }
     rebuild_pending = true;
-    lv_async_call(rebuild_ui_async, NULL);
+    lv_timer_create(rebuild_ui_timer_cb, 20, NULL);
 }
 
 static void rotate_clicked_cb(lv_event_t * event)
