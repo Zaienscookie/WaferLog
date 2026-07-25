@@ -74,6 +74,19 @@ set_target_properties(waferlog PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
 )
 
+if(WIN32)
+    set(WAFERLOG_SDL2_DLL
+        "${CMAKE_CURRENT_SOURCE_DIR}/SDL2-2.30.1/x86_64-w64-mingw32/bin/SDL2.dll"
+    )
+    if(EXISTS "${WAFERLOG_SDL2_DLL}")
+        add_custom_command(TARGET waferlog POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${WAFERLOG_SDL2_DLL}"
+                "$<TARGET_FILE_DIR:waferlog>/SDL2.dll"
+        )
+    endif()
+endif()
+
 add_custom_target(run
     COMMAND waferlog
     DEPENDS waferlog

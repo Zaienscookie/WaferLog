@@ -1,6 +1,17 @@
 # Build output
 build/
 bin/
+.build/
+.build-local/
+tuya_t5ai_app/.build/
+tuya_t5ai_app/dist/
+tuya_t5ai_build.log
+
+# Local cloud service data and dependencies
+cloud-web/node_modules/
+cloud-web/server/data/
+cloud-web/web/dist/
+cloud-web/**/*.tsbuildinfo
 
 # Local LVGL and SDL caches. CMake fetches LVGL in clean environments.
 lvgl/
@@ -10,3 +21,4 @@ SDL2-2.30.1/
 .vscode/
 .idea/
 .DS_Store
+tuya_t5ai_app/src/waferlog_local_config.h

@@ -1,0 +1,20 @@
+{
+  "name": "waferlog",
+  "private": true,
+  "version": "0.1.0",
+  "description": "WaferLog 硅笺 — 随手一笔，久久有回响。",
+  "workspaces": [
+    "server",
+    "web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n server,web -c yellow,cyan \"npm run dev --workspace server\" \"npm run dev --workspace web\"",
+    "build": "npm run build --workspace web",
+    "start": "npm run start --workspace server",
+    "seed": "npm run seed --workspace server",
+    "smoke": "npm run smoke --workspace server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

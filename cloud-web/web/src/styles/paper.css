@@ -1,0 +1,334 @@
+/* ============ 纸页：原稿永远是主角 ============ */
+.paper {
+  position: relative;
+  background: var(--paper-sheet);
+  border-radius: 6px 18px 8px 16px / 16px 8px 18px 6px;
+  box-shadow: var(--shadow-sheet);
+  border: 1px solid color-mix(in srgb, var(--line) 65%, transparent);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  overflow: hidden;
+}
+.paper::before {
+  /* 纸纹颗粒 */
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.55;
+  background-image:
+    radial-gradient(rgba(150, 122, 78, 0.05) 1px, transparent 1.4px),
+    radial-gradient(rgba(150, 122, 78, 0.04) 1px, transparent 1.2px);
+  background-size: 17px 19px, 29px 31px;
+  background-position: 0 0, 7px 11px;
+}
+.paper-ruled::after {
+  /* 横线 */
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent 31px,
+    color-mix(in srgb, var(--line) 55%, transparent) 31px,
+    color-mix(in srgb, var(--line) 55%, transparent) 32px
+  );
+  background-position: 0 18px;
+}
+.paper-grid::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--line) 45%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--line) 45%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+a.paper:hover,
+.paper.hoverable:hover {
+  transform: translateY(-3px) rotate(var(--tilt, 0deg));
+  box-shadow: var(--shadow-lift);
+}
+
+.paper-body {
+  position: relative;
+  padding: 18px 20px;
+}
+.paper-text {
+  font-family: var(--font-hand);
+  font-size: 17px;
+  line-height: 32px;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.paper-text.clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.paper-strokes {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.paper-meta {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+  color: var(--ink-3);
+  letter-spacing: 0.04em;
+}
+.paper-meta .spacer {
+  flex: 1;
+}
+
+.audio-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--amber-deep);
+}
+
+[data-theme='dark'] .audio-badge {
+  color: var(--amber-glow);
+}
+
+/* 回响徽记 */
+.echo-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--echo);
+  font-weight: 600;
+}
+.echo-badge svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* ============ 档案票据：旧笔记像从资料盒抽出的索引卡 ============ */
+.ticket {
+  position: relative;
+  display: block;
+  background: var(--paper-sheet);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow-ticket);
+  padding: 14px 16px 12px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.ticket::before {
+  /* 打孔边 */
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 3px;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--amber) 0 6px,
+    transparent 6px 12px
+  );
+  opacity: 0.55;
+}
+.ticket:hover {
+  transform: translateY(-2px) rotate(var(--tilt, -0.6deg));
+  box-shadow: var(--shadow-lift);
+}
+.ticket-date {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+  margin-bottom: 6px;
+}
+.ticket-title {
+  font-family: var(--font-hand);
+  font-size: 17px;
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+.ticket-reason {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink-2);
+  border-top: 1px dashed var(--line);
+  padding-top: 8px;
+}
+.ticket-reason .why {
+  color: var(--amber-deep);
+}
+[data-theme='dark'] .ticket-reason .why {
+  color: var(--amber-glow);
+}
+
+/* ============ 记忆底片：琥珀时间层 ============ */
+.film {
+  position: relative;
+  border-radius: 22px;
+  border: 1px solid var(--film-2);
+  background:
+    radial-gradient(circle at 50% 42%, var(--film-2), transparent 62%),
+    var(--film);
+  overflow: hidden;
+}
+.film::before {
+  /* 硅片刻线 */
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--amber) 8%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--amber) 8%, transparent) 1px, transparent 1px);
+  background-size: 44px 44px;
+  mask-image: radial-gradient(circle at 50% 45%, black, transparent 75%);
+}
+.film-core {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+.echo-count {
+  font-family: var(--font-hand);
+  font-size: clamp(38px, 5vw, 54px);
+  line-height: 1;
+  color: var(--amber-deep);
+  text-shadow: 0 0 22px color-mix(in srgb, var(--amber-glow) 55%, transparent);
+}
+[data-theme='dark'] .echo-count {
+  color: var(--amber-glow);
+}
+.echo-count-label {
+  margin-top: 8px;
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  color: var(--ink-2);
+}
+
+/* 回响细线：仅强关联时生长一次 */
+.echo-lines {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.echo-lines path {
+  fill: none;
+  stroke: var(--amber);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-dasharray: var(--len, 300);
+  stroke-dashoffset: var(--len, 300);
+  animation: grow-line 0.9s ease forwards;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--amber-glow) 70%, transparent));
+}
+.echo-lines circle {
+  fill: var(--amber-glow);
+  opacity: 0;
+  animation: node-on 0.4s ease 0.7s forwards;
+  filter: drop-shadow(0 0 6px var(--amber-glow));
+}
+@keyframes grow-line {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes node-on {
+  to {
+    opacity: 1;
+  }
+}
+
+/* 落笔波纹：保存即点亮坐标 */
+.ripple {
+  position: absolute;
+  z-index: 5;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: var(--amber-glow);
+  transform: translate(-50%, -50%);
+  animation: ripple-out 0.55s ease-out forwards;
+}
+@keyframes ripple-out {
+  from {
+    opacity: 0.85;
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--amber-glow) 65%, transparent);
+  }
+  to {
+    opacity: 0;
+    box-shadow: 0 0 0 26px transparent;
+  }
+}
+
+/* ============ 主题档案盒 ============ */
+.box {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(180deg, var(--paper-warm), var(--paper-sheet) 30%);
+  box-shadow: var(--shadow-ticket);
+  padding: 16px 18px;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+.box:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lift);
+}
+.box-lid {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  cursor: pointer;
+}
+.box-name {
+  font-size: 17px;
+  font-family: var(--font-hand);
+}
+.box-count {
+  font-size: 12px;
+  color: var(--ink-3);
+  letter-spacing: 0.06em;
+}
+
+/* ============ 索引签（详情页注释膜） ============ */
+.membrane-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 14px;
+  min-height: 40px;
+  border-radius: 10px 10px 0 0;
+  border: 1px solid var(--line);
+  border-bottom: none;
+  font-size: 13px;
+  color: var(--ink-3);
+  background: var(--paper-warm);
+  transition: all 0.15s ease;
+}
+.membrane-tab.active {
+  color: var(--amber-deep);
+  background: var(--paper-sheet);
+  box-shadow: inset 0 2px 0 var(--amber);
+}
+[data-theme='dark'] .membrane-tab.active {
+  color: var(--amber-glow);
+}
+.membrane-panel {
+  border: 1px solid var(--line);
+  border-radius: 0 12px 12px 12px;
+  background: var(--paper-sheet);
+  padding: 18px;
+}

@@ -6,7 +6,11 @@
 #include <string.h>
 #include <time.h>
 
+#ifdef WAFERLOG_T5AI
+#include "lvgl.h"
+#else
 #include "lvgl/lvgl.h"
+#endif
 #include "hal/waferlog_services.h"
 
 LV_FONT_DECLARE(waferlog_font_14);
@@ -16,7 +20,10 @@ LV_FONT_DECLARE(waferlog_font_16);
 #define FOOTER_HEIGHT 64
 #define LANDSCAPE_FOOTER_HEIGHT 52
 #define NOTE_PAGE_COUNT 12
-#define NOTE_STROKE_LIMIT 768
+#ifndef NOTE_STROKE_LIMIT
+#define NOTE_STROKE_LIMIT 4096
+#endif
+#define NOTE_MIN_SAMPLE_DISTANCE 3
 #define NOTE_CANVAS_MAX_WIDTH 640
 #define NOTE_CANVAS_MAX_HEIGHT 464
 
@@ -159,6 +166,8 @@ static int32_t display_height;
 static int32_t footer_height;
 static int32_t note_canvas_width;
 static int32_t note_canvas_height;
+static uint8_t * note_canvas_buffer;
+static size_t note_canvas_buffer_size;
 static lv_point_t previous_note_point;
 static uint32_t previous_note_tick;
 static bool wifi_radio_enabled;
@@ -176,15 +185,6 @@ static lv_obj_t * wifi_password_toggle;
 static lv_obj_t * wifi_keyboard;
 static bool wifi_password_required;
 static char wifi_pending_ssid[64];
-static uint8_t note_canvas_buffer[
-    LV_CANVAS_BUF_SIZE(
-        NOTE_CANVAS_MAX_WIDTH,
-        NOTE_CANVAS_MAX_HEIGHT,
-        16,
-        LV_DRAW_BUF_STRIDE_ALIGN
-    )
-];
-
 static void render_current_page(void);
 static void render_note_page(void);
 static void render_calendar_page(void);
@@ -205,7 +205,7 @@ static void wifi_credentials_close_cb(lv_event_t * event);
 static void wifi_credentials_input_cb(lv_event_t * event);
 static void wifi_password_toggle_cb(lv_event_t * event);
 static void wifi_credentials_join_cb(lv_event_t * event);
-static void rebuild_create_cb(lv_timer_t * timer);
+static void rebuild_ui_timer_cb(lv_timer_t * timer);
 
 static lv_color_t color(uint32_t rgb)
 {
@@ -413,6 +413,21 @@ static void toast_hide_cb(lv_timer_t * timer)
     toast_timer = NULL;
 }
 
+static void waferlog_move_foreground(lv_obj_t * object)
+{
+    if(object == NULL) {
+        return;
+    }
+#ifdef WAFERLOG_T5AI
+    lv_obj_t * parent = lv_obj_get_parent(object);
+    if(parent != NULL) {
+        lv_obj_move_to_index(object, lv_obj_get_child_count(parent) - 1);
+    }
+#else
+    lv_obj_move_foreground(object);
+#endif
+}
+
 static void show_toast(const char * message)
 {
     if(toast_label == NULL) {
@@ -420,7 +435,7 @@ static void show_toast(const char * message)
     }
     lv_label_set_text(toast_label, message);
     lv_obj_remove_flag(toast_label, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(toast_label);
+    waferlog_move_foreground(toast_label);
     if(toast_timer != NULL) {
         lv_timer_delete(toast_timer);
     }
@@ -560,8 +575,13 @@ static void network_close_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
     if(network_overlay != NULL) {
-        lv_obj_delete_async(network_overlay);
+        lv_obj_delete(network_overlay);
         network_overlay = NULL;
+        network_sheet = NULL;
+        network_list = NULL;
+        network_status_label = NULL;
+        network_scan_button = NULL;
+        network_scan_label = NULL;
     }
 }
 
@@ -656,7 +676,7 @@ static void wifi_credentials_close_cb(lv_event_t * event)
 {
     LV_UNUSED(event);
     if(wifi_credentials_overlay != NULL) {
-        lv_obj_delete_async(wifi_credentials_overlay);
+        lv_obj_delete(wifi_credentials_overlay);
         wifi_credentials_overlay = NULL;
     }
     wifi_ssid_input = NULL;
@@ -671,7 +691,7 @@ static void wifi_credentials_input_cb(lv_event_t * event)
     if(wifi_keyboard != NULL) {
         lv_keyboard_set_textarea(wifi_keyboard, target);
         lv_obj_remove_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_move_foreground(wifi_keyboard);
+        waferlog_move_foreground(wifi_keyboard);
     }
 }
 
@@ -802,7 +822,9 @@ static void show_network_overlay(bool bluetooth_tab)
         waferlog_ble_scan();
     }
     else {
-        wifi_radio_enabled = true;
+        if(!wifi_radio_enabled) {
+            wifi_radio_enabled = true;
+        }
         waferlog_wifi_scan();
     }
 
@@ -811,7 +833,9 @@ static void show_network_overlay(bool bluetooth_tab)
         app_root, 0, 0, display_width, display_height, 0x000000, 0
     );
     lv_obj_set_style_bg_opa(network_overlay, LV_OPA_40, LV_PART_MAIN);
-    lv_obj_move_foreground(network_overlay);
+    lv_obj_add_flag(network_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(network_overlay, network_close_cb, LV_EVENT_CLICKED, NULL);
+    waferlog_move_foreground(network_overlay);
     network_sheet = make_panel(
         network_overlay,
         is_landscape ? (display_width - 460) / 2 : 0,
@@ -827,8 +851,8 @@ static void show_network_overlay(bool bluetooth_tab)
     lv_obj_set_pos(title, 16, 14);
     text_style(title, &lv_font_montserrat_20, theme_text());
     make_button(
-        network_sheet, sheet_width - 52, 10, 40, 36, LV_SYMBOL_CLOSE,
-        theme_surface(), theme_text(), 10, &lv_font_montserrat_16,
+        network_sheet, sheet_width - 60, 6, 52, 44, "X",
+        theme_surface(), theme_text(), 10, &lv_font_montserrat_20,
         network_close_cb, 0
     );
     make_button(
@@ -882,14 +906,22 @@ static void show_wifi_credentials(const char * ssid, bool password_required)
         return;
     }
     wifi_password_required = password_required;
-    lv_strlcpy(wifi_pending_ssid, ssid != NULL ? ssid : "",
-               sizeof(wifi_pending_ssid));
+    snprintf(
+        wifi_pending_ssid,
+        sizeof(wifi_pending_ssid),
+        "%s",
+        ssid != NULL ? ssid : ""
+    );
     int32_t sheet_height = is_landscape ? 250 : 330;
     wifi_credentials_overlay = make_panel(
         app_root, 0, 0, display_width, display_height, 0x000000, 0
     );
     lv_obj_set_style_bg_opa(wifi_credentials_overlay, LV_OPA_40, LV_PART_MAIN);
-    lv_obj_move_foreground(wifi_credentials_overlay);
+    lv_obj_add_flag(wifi_credentials_overlay, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(
+        wifi_credentials_overlay, wifi_credentials_close_cb, LV_EVENT_CLICKED, NULL
+    );
+    waferlog_move_foreground(wifi_credentials_overlay);
     lv_obj_t * sheet = make_panel(
         wifi_credentials_overlay,
         is_landscape ? (display_width - 460) / 2 : 0,
@@ -905,8 +937,8 @@ static void show_wifi_credentials(const char * ssid, bool password_required)
     lv_obj_set_pos(title, 16, 14);
     text_style(title, &lv_font_montserrat_20, theme_text());
     make_button(
-        sheet, sheet_width - 52, 10, 40, 36, LV_SYMBOL_CLOSE,
-        theme_surface(), theme_text(), 10, &lv_font_montserrat_16,
+        sheet, sheet_width - 60, 6, 52, 44, "X",
+        theme_surface(), theme_text(), 10, &lv_font_montserrat_20,
         wifi_credentials_close_cb, 0
     );
     wifi_ssid_input = lv_textarea_create(sheet);
@@ -954,92 +986,208 @@ static void show_wifi_credentials(const char * ssid, bool password_required)
     lv_obj_add_flag(wifi_keyboard, LV_OBJ_FLAG_HIDDEN);
 }
 
+static void note_set_pixel(int32_t x, int32_t y, lv_color_t pixel)
+{
+    if(note_canvas == NULL ||
+       x < 0 || y < 0 ||
+       x >= note_canvas_width || y >= note_canvas_height) {
+        return;
+    }
+    lv_draw_buf_t * draw_buf = lv_canvas_get_draw_buf(note_canvas);
+    uint8_t * data = draw_buf == NULL
+        ? NULL
+        : lv_draw_buf_goto_xy(draw_buf, (uint32_t)x, (uint32_t)y);
+    if(data != NULL) {
+        lv_color16_t * pixel16 = (lv_color16_t *)data;
+        pixel16->red = pixel.red >> 3;
+        pixel16->green = pixel.green >> 2;
+        pixel16->blue = pixel.blue >> 3;
+    }
+}
+
 static void note_draw_paper(void)
 {
     if(note_canvas == NULL) {
         return;
     }
 
-    lv_canvas_fill_bg(note_canvas, color(dark_mode ? 0x171B21 : 0xFFFFFF), LV_OPA_COVER);
+    lv_canvas_fill_bg(
+        note_canvas,
+        color(dark_mode ? 0x171B21 : 0xFFFFFF),
+        LV_OPA_COVER
+    );
     uint8_t paper = note_pages[note_page_index].paper;
     if(paper == PAPER_BLANK) {
         return;
     }
 
-    lv_layer_t layer;
-    lv_canvas_init_layer(note_canvas, &layer);
-    lv_draw_line_dsc_t line;
-    lv_draw_line_dsc_init(&line);
-    line.color = color(dark_mode ? 0x36404A : 0xDCE7ED);
-    line.width = 1;
-
+    lv_color_t paper_line = color(dark_mode ? 0x36404A : 0xDCE7ED);
     if(paper == PAPER_RULED || paper == PAPER_GRID) {
         for(int32_t y = 36; y < note_canvas_height; y += 36) {
-            line.p1.x = 0;
-            line.p1.y = y;
-            line.p2.x = note_canvas_width - 1;
-            line.p2.y = y;
-            lv_draw_line(&layer, &line);
+            for(int32_t x = 0; x < note_canvas_width; x++) {
+                note_set_pixel(x, y, paper_line);
+            }
         }
     }
     if(paper == PAPER_GRID) {
         for(int32_t x = 36; x < note_canvas_width; x += 36) {
-            line.p1.x = x;
-            line.p1.y = 0;
-            line.p2.x = x;
-            line.p2.y = note_canvas_height - 1;
-            lv_draw_line(&layer, &line);
+            for(int32_t y = 0; y < note_canvas_height; y++) {
+                note_set_pixel(x, y, paper_line);
+            }
         }
     }
     if(paper == PAPER_DOTS) {
         for(int32_t y = 24; y < note_canvas_height; y += 24) {
             for(int32_t x = 24; x < note_canvas_width; x += 24) {
-                line.p1.x = x;
-                line.p1.y = y;
-                line.p2.x = x + 1;
-                line.p2.y = y;
-                lv_draw_line(&layer, &line);
+                note_set_pixel(x, y, paper_line);
             }
         }
     }
-    lv_canvas_finish_layer(note_canvas, &layer);
 }
 
-static void note_draw_stroke(const note_stroke_t * stroke)
+static lv_color_t note_paper_pixel(int32_t x, int32_t y)
+{
+    uint8_t paper = note_pages[note_page_index].paper;
+    bool line = false;
+    if((paper == PAPER_RULED || paper == PAPER_GRID) && y >= 36 && y % 36 == 0) {
+        line = true;
+    }
+    if(paper == PAPER_GRID && x >= 36 && x % 36 == 0) {
+        line = true;
+    }
+    if(paper == PAPER_DOTS && x >= 24 && x % 24 == 0 &&
+       y >= 24 && y % 24 == 0) {
+        line = true;
+    }
+    return color(line ? (dark_mode ? 0x36404A : 0xDCE7ED)
+                      : (dark_mode ? 0x171B21 : 0xFFFFFF));
+}
+
+static uint32_t note_stroke_color(const note_stroke_t * stroke)
+{
+    if(stroke->color_index == UINT8_MAX) {
+        return dark_mode ? 0x171B21 : 0xFFFFFF;
+    }
+    if(dark_mode && stroke->color_index == 0) {
+        return 0xE8EEF4;
+    }
+    return ink_colors[stroke->color_index % 4];
+}
+
+static bool note_build_upload_content(char * buffer, size_t capacity)
+{
+    if(buffer == NULL || capacity < 32U) {
+        return false;
+    }
+    size_t used = 0U;
+    int written = lv_snprintf(
+        buffer + used,
+        capacity - used,
+        "{\"viewBox\":[%ld,%ld],\"paper\":%u,\"strokes\":[",
+        (long)note_canvas_width,
+        (long)note_canvas_height,
+        (unsigned)note_pages[note_page_index].paper
+    );
+    if(written < 0 || (size_t)written >= capacity - used) {
+        return false;
+    }
+    used += (size_t)written;
+    const note_page_t * page = &note_pages[note_page_index];
+    for(uint32_t i = 0U; i < page->stroke_count; i++) {
+        const note_stroke_t * stroke = &page->strokes[i];
+        uint32_t rgb = note_stroke_color(stroke);
+        written = lv_snprintf(
+            buffer + used,
+            capacity - used,
+            "%s{\"points\":[[%d,%d,0.5],[%d,%d,0.5]],\"color\":\"#%06lX\",\"size\":%u}",
+            i == 0U ? "" : ",",
+            (int)stroke->x1,
+            (int)stroke->y1,
+            (int)stroke->x2,
+            (int)stroke->y2,
+            (unsigned long)rgb,
+            (unsigned)stroke->width
+        );
+        if(written < 0 || (size_t)written >= capacity - used) {
+            return false;
+        }
+        used += (size_t)written;
+    }
+    written = lv_snprintf(buffer + used, capacity - used, "]}");
+    return written >= 0 && (size_t)written < capacity - used;
+}
+
+static void note_draw_stroke_pixels(const note_stroke_t * stroke)
 {
     if(note_canvas == NULL || stroke == NULL) {
         return;
     }
 
-    lv_layer_t layer;
-    lv_canvas_init_layer(note_canvas, &layer);
-    lv_draw_line_dsc_t line;
-    lv_draw_line_dsc_init(&line);
-    uint32_t ink_color = stroke->color_index == UINT8_MAX
-        ? (dark_mode ? 0x171B21 : 0xFFFFFF)
-        : ink_colors[stroke->color_index % 4];
-    if(!eraser_enabled && dark_mode && stroke->color_index == 0) {
-        ink_color = 0xE8EEF4;
+    const lv_color_t ink_pixel = color(note_stroke_color(stroke));
+    int32_t x = stroke->x1;
+    int32_t y = stroke->y1;
+    int32_t dx = LV_ABS(stroke->x2 - stroke->x1);
+    int32_t sx = stroke->x1 < stroke->x2 ? 1 : -1;
+    int32_t dy = -LV_ABS(stroke->y2 - stroke->y1);
+    int32_t sy = stroke->y1 < stroke->y2 ? 1 : -1;
+    int32_t error = dx + dy;
+    int32_t radius = LV_MAX(0, (int32_t)stroke->width / 2);
+
+    while(true) {
+        for(int32_t oy = -radius; oy <= radius; oy++) {
+            for(int32_t ox = -radius; ox <= radius; ox++) {
+                if(ox * ox + oy * oy <= radius * radius) {
+                    note_set_pixel(
+                        x + ox,
+                        y + oy,
+                        stroke->color_index == UINT8_MAX
+                            ? note_paper_pixel(x + ox, y + oy)
+                            : ink_pixel
+                    );
+                }
+            }
+        }
+        if(x == stroke->x2 && y == stroke->y2) {
+            break;
+        }
+        int32_t twice_error = 2 * error;
+        if(twice_error >= dy) {
+            error += dy;
+            x += sx;
+        }
+        if(twice_error <= dx) {
+            error += dx;
+            y += sy;
+        }
     }
-    line.color = color(ink_color);
-    line.width = stroke->width;
-    line.round_start = 1;
-    line.round_end = 1;
-    line.p1.x = stroke->x1;
-    line.p1.y = stroke->y1;
-    line.p2.x = stroke->x2;
-    line.p2.y = stroke->y2;
-    lv_draw_line(&layer, &line);
-    lv_canvas_finish_layer(note_canvas, &layer);
+}
+
+static void note_flush_canvas(void)
+{
+#ifndef WAFERLOG_T5AI
+    if(note_canvas != NULL) {
+        lv_draw_buf_flush_cache(lv_canvas_get_draw_buf(note_canvas), NULL);
+    }
+#endif
+    if(note_canvas != NULL) {
+        lv_obj_invalidate(note_canvas);
+    }
 }
 
 static void note_redraw_canvas(void)
 {
     note_draw_paper();
     note_page_t * page = &note_pages[note_page_index];
-    for(uint32_t i = 0; i < page->stroke_count; i++) {
-        note_draw_stroke(&page->strokes[i]);
+    if(note_canvas == NULL) {
+        return;
     }
+    if(page->stroke_count > 0) {
+        for(uint32_t i = 0; i < page->stroke_count; i++) {
+            note_draw_stroke_pixels(&page->strokes[i]);
+        }
+    }
+    note_flush_canvas();
+    lv_obj_invalidate(note_canvas);
 }
 
 static void note_canvas_event_cb(lv_event_t * event)
@@ -1067,6 +1215,11 @@ static void note_canvas_event_cb(lv_event_t * event)
     lv_indev_get_point(indev, &point);
     lv_area_t area;
     lv_obj_get_coords(note_canvas, &area);
+    if(point.x < area.x1 || point.x > area.x2 ||
+       point.y < area.y1 || point.y > area.y2) {
+        note_stroke_active = false;
+        return;
+    }
     point.x -= area.x1;
     point.y -= area.y1;
     point.x = LV_CLAMP(0, point.x, note_canvas_width - 1);
@@ -1086,7 +1239,7 @@ static void note_canvas_event_cb(lv_event_t * event)
     int32_t distance =
         LV_ABS(point.x - previous_note_point.x) +
         LV_ABS(point.y - previous_note_point.y);
-    if(distance == 0) {
+    if(distance < NOTE_MIN_SAMPLE_DISTANCE) {
         return;
     }
     int32_t speed = elapsed > 0 ? distance * 10 / (int32_t)elapsed : distance * 10;
@@ -1110,7 +1263,8 @@ static void note_canvas_event_cb(lv_event_t * event)
     stroke->y2 = (int16_t)point.y;
     stroke->width = (uint8_t)stroke_width;
     stroke->color_index = eraser_enabled ? UINT8_MAX : note_color_index;
-    note_draw_stroke(stroke);
+    note_draw_stroke_pixels(stroke);
+    note_flush_canvas();
 
     previous_note_point = point;
     previous_note_tick = lv_tick_get();
@@ -1166,7 +1320,19 @@ static void note_upload_clicked_cb(lv_event_t * event)
         show_toast(tr(TEXT_CONNECT_WIFI_FIRST));
         return;
     }
-    if(waferlog_note_upload()) {
+    char * upload_content = lv_malloc(128U * 1024U);
+    if(upload_content == NULL || !note_build_upload_content(upload_content, 128U * 1024U)) {
+        if(upload_content != NULL) {
+            lv_free(upload_content);
+        }
+        show_toast(tr(TEXT_NOTHING_TO_UPLOAD));
+        return;
+    }
+    char title[32];
+    lv_snprintf(title, sizeof(title), "WaferLog Page %02u", (unsigned)note_page_index + 1U);
+    bool uploaded = waferlog_note_upload_payload(title, upload_content, "");
+    lv_free(upload_content);
+    if(uploaded) {
         note_saved = true;
         note_uploaded = true;
         show_toast(tr(TEXT_UPLOAD_COMPLETE));
@@ -1293,8 +1459,8 @@ static void render_note_page(void)
         );
 
         lv_obj_t * dropdown = lv_dropdown_create(tools);
-        lv_obj_set_pos(dropdown, 8, 5);
-        lv_obj_set_size(dropdown, 72, 34);
+        lv_obj_set_pos(dropdown, 4, 5);
+        lv_obj_set_size(dropdown, 62, 34);
         char paper_options[96];
         lv_snprintf(
             paper_options,
@@ -1309,7 +1475,8 @@ static void render_note_page(void)
         lv_dropdown_set_selected(dropdown, note_pages[note_page_index].paper);
         lv_obj_set_style_bg_color(dropdown, color(theme_surface()), LV_PART_MAIN);
         lv_obj_set_style_text_color(dropdown, color(theme_text()), LV_PART_MAIN);
-        lv_obj_set_style_text_font(dropdown, &lv_font_montserrat_12, LV_PART_MAIN);
+        lv_obj_set_style_text_font(dropdown, &waferlog_font_14, LV_PART_MAIN);
+        lv_obj_set_style_text_font(dropdown, &waferlog_font_14, LV_PART_ITEMS);
         lv_obj_set_style_border_color(dropdown, color(theme_border()), LV_PART_MAIN);
         lv_obj_set_style_border_width(dropdown, 1, LV_PART_MAIN);
         lv_obj_set_style_radius(dropdown, 8, LV_PART_MAIN);
@@ -1324,12 +1491,12 @@ static void render_note_page(void)
         for(uint32_t i = 0; i < 4; i++) {
             lv_obj_t * swatch = make_button(
                 tools,
-                86 + (int32_t)i * 29,
+                70 + (int32_t)i * 23,
                 9,
-                24,
+                20,
                 24,
                 "",
-                ink_colors[i],
+                dark_mode && i == 0 ? 0xE8EEF4 : ink_colors[i],
                 0xFFFFFF,
                 12,
                 &lv_font_montserrat_12,
@@ -1351,7 +1518,7 @@ static void render_note_page(void)
         }
 
         make_button(
-            tools, 204, 7, 28, 30, LV_SYMBOL_MINUS,
+            tools, 166, 7, 28, 30, LV_SYMBOL_MINUS,
             theme_surface(), theme_text(), 9, &lv_font_montserrat_14,
             note_width_clicked_cb, (uintptr_t)-1
         );
@@ -1359,23 +1526,23 @@ static void render_note_page(void)
         lv_snprintf(size_text, sizeof(size_text), "%d", brush_size);
         lv_obj_t * size_label = lv_label_create(tools);
         lv_label_set_text(size_label, size_text);
-        lv_obj_set_pos(size_label, 234, 14);
-        lv_obj_set_width(size_label, 20);
+        lv_obj_set_pos(size_label, 196, 14);
+        lv_obj_set_width(size_label, 18);
         lv_obj_set_style_text_align(size_label, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
         text_style(size_label, &lv_font_montserrat_14, theme_text());
         make_button(
-            tools, 256, 7, 28, 30, LV_SYMBOL_PLUS,
+            tools, 216, 7, 28, 30, LV_SYMBOL_PLUS,
             theme_surface(), theme_text(), 9, &lv_font_montserrat_14,
             note_width_clicked_cb, 1U
         );
         make_button(
-            tools, 288, 7, 30, 30, LV_SYMBOL_BACKSPACE,
+            tools, 247, 7, 29, 30, LV_SYMBOL_BACKSPACE,
             eraser_enabled ? theme_accent_soft() : theme_surface(),
             eraser_enabled ? theme_accent() : theme_text(),
             9, &lv_font_montserrat_14, note_eraser_clicked_cb, 0U
         );
         make_button(
-            tools, 322, 7, 30, 30, LV_SYMBOL_TRASH,
+            tools, 279, 7, 36, 30, LV_SYMBOL_TRASH,
             theme_surface(), theme_text(), 9, &lv_font_montserrat_14,
             note_clear_clicked_cb, 0U
         );
@@ -1386,6 +1553,25 @@ static void render_note_page(void)
     note_canvas_height = content_height - canvas_y;
     note_canvas_width = LV_MIN(note_canvas_width, NOTE_CANVAS_MAX_WIDTH);
     note_canvas_height = LV_MIN(note_canvas_height, NOTE_CANVAS_MAX_HEIGHT);
+
+    size_t canvas_buffer_size = LV_CANVAS_BUF_SIZE(
+        note_canvas_width,
+        note_canvas_height,
+        16,
+        LV_DRAW_BUF_STRIDE_ALIGN
+    );
+    if(note_canvas_buffer_size < canvas_buffer_size) {
+        if(note_canvas_buffer != NULL) {
+            lv_free(note_canvas_buffer);
+            note_canvas_buffer = NULL;
+            note_canvas_buffer_size = 0;
+        }
+        note_canvas_buffer = lv_malloc(canvas_buffer_size);
+        if(note_canvas_buffer == NULL) {
+            return;
+        }
+        note_canvas_buffer_size = canvas_buffer_size;
+    }
 
     note_canvas = lv_canvas_create(content_view);
     lv_canvas_set_buffer(
@@ -1473,7 +1659,7 @@ static void make_home_geometry(lv_obj_t * hero, int32_t hero_width)
         recording_clicked_cb,
         0U
     );
-    lv_obj_move_foreground(record);
+    waferlog_move_foreground(record);
 }
 
 static lv_obj_t * make_home_tile(
@@ -1891,12 +2077,27 @@ static void render_calendar_page(void)
     lv_obj_t * calendar = lv_calendar_create(content_view);
     lv_obj_set_pos(calendar, calendar_x, calendar_y);
     lv_obj_set_size(calendar, calendar_width, calendar_height);
+#if LVGL_VERSION_MAJOR >= 9
+    lv_calendar_set_today_date(
+        calendar,
+        local_time.tm_year + 1900,
+        local_time.tm_mon + 1,
+        local_time.tm_mday
+    );
+    lv_calendar_set_showed_date(
+        calendar,
+        local_time.tm_year + 1900,
+        local_time.tm_mon + 1
+    );
+    lv_calendar_header_arrow_create(calendar);
+#else
     lv_calendar_set_today_year(calendar, local_time.tm_year + 1900);
     lv_calendar_set_today_month(calendar, local_time.tm_mon + 1);
     lv_calendar_set_today_day(calendar, local_time.tm_mday);
     lv_calendar_set_shown_year(calendar, local_time.tm_year + 1900);
     lv_calendar_set_shown_month(calendar, local_time.tm_mon + 1);
     lv_calendar_add_header_arrow(calendar);
+#endif
     lv_obj_set_style_bg_color(calendar, color(theme_surface()), LV_PART_MAIN);
     lv_obj_set_style_text_color(calendar, color(theme_text()), LV_PART_MAIN);
     lv_obj_set_style_text_font(calendar, &lv_font_montserrat_14, LV_PART_MAIN);
@@ -1920,15 +2121,9 @@ static void render_current_page(void)
     }
 }
 
-static void rebuild_create_cb(lv_timer_t * timer)
+static void rebuild_ui_timer_cb(lv_timer_t * timer)
 {
-    LV_UNUSED(timer);
-    waferlog_ui_create();
-}
-
-static void rebuild_ui_async(void * user_data)
-{
-    LV_UNUSED(user_data);
+    lv_timer_delete(timer);
     rebuild_pending = false;
     if(clock_timer != NULL) {
         lv_timer_delete(clock_timer);
@@ -1939,7 +2134,7 @@ static void rebuild_ui_async(void * user_data)
         toast_timer = NULL;
     }
     if(app_root != NULL) {
-        lv_obj_delete_async(app_root);
+        lv_obj_delete(app_root);
         app_root = NULL;
     }
     content_view = NULL;
@@ -1961,12 +2156,7 @@ static void rebuild_ui_async(void * user_data)
     for(uint32_t i = 0; i < 3; i++) {
         nav_buttons[i] = NULL;
     }
-    lv_timer_t * timer = lv_timer_create(
-        rebuild_create_cb,
-        1,
-        NULL
-    );
-    lv_timer_set_repeat_count(timer, 1);
+    waferlog_ui_create();
 }
 
 static void request_rebuild(void)
@@ -1975,7 +2165,7 @@ static void request_rebuild(void)
         return;
     }
     rebuild_pending = true;
-    lv_async_call(rebuild_ui_async, NULL);
+    lv_timer_create(rebuild_ui_timer_cb, 20, NULL);
 }
 
 static void rotate_clicked_cb(lv_event_t * event)
@@ -2011,19 +2201,18 @@ static void overlay_close_clicked_cb(lv_event_t * event)
 {
     lv_obj_t * overlay = lv_event_get_user_data(event);
     if(overlay != NULL) {
-        lv_obj_delete_async(overlay);
+        lv_obj_delete(overlay);
     }
 }
 
 static void language_selected_cb(lv_event_t * event)
 {
     language_index = (uint8_t)(uintptr_t)lv_event_get_user_data(event);
-    static const char * codes[] = {"EN", "中", "日", "FR", "RU"};
     lv_obj_t * overlay = lv_obj_get_parent(lv_obj_get_parent(lv_event_get_target_obj(event)));
-    lv_obj_delete_async(overlay);
-    if(language_label != NULL) {
-        lv_label_set_text(language_label, codes[language_index]);
+    if(overlay != NULL) {
+        lv_obj_delete(overlay);
     }
+    language_label = NULL;
     request_rebuild();
 }
 
@@ -2039,7 +2228,7 @@ static lv_obj_t * create_overlay(int32_t sheet_height, const char * title)
         0
     );
     lv_obj_set_style_bg_opa(overlay, LV_OPA_40, LV_PART_MAIN);
-    lv_obj_move_foreground(overlay);
+    waferlog_move_foreground(overlay);
 
     int32_t sheet_width = is_landscape ? LV_MIN(460, display_width) : display_width;
     lv_obj_t * sheet = make_panel(
@@ -2367,7 +2556,7 @@ void waferlog_ui_create(void)
     lv_obj_set_style_bg_color(toast_label, color(dark_mode ? 0xF6F7F8 : 0x121318), LV_PART_MAIN);
     lv_obj_set_style_bg_opa(toast_label, LV_OPA_90, LV_PART_MAIN);
     lv_obj_set_style_text_color(toast_label, color(dark_mode ? 0x121318 : 0xFFFFFF), LV_PART_MAIN);
-    lv_obj_set_style_text_font(toast_label, &lv_font_montserrat_12, LV_PART_MAIN);
+    lv_obj_set_style_text_font(toast_label, &waferlog_font_14, LV_PART_MAIN);
     lv_obj_set_style_radius(toast_label, 9, LV_PART_MAIN);
     lv_obj_set_style_pad_hor(toast_label, 12, LV_PART_MAIN);
     lv_obj_set_style_pad_ver(toast_label, 8, LV_PART_MAIN);
