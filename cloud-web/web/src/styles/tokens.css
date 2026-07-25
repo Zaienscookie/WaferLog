@@ -1,0 +1,310 @@
+/* ============ 记忆显影仪 · 设计令牌 ============ */
+:root {
+  /* 纸与墨 */
+  --paper: #f4eddc;
+  --paper-sheet: #fbf6e9;
+  --paper-warm: #ece1c8;
+  --ink: #2e2921;
+  --ink-2: #5c5344;
+  --ink-3: #948a76;
+  --line: #ddd1b8;
+  /* 琥珀显影层（硅片底片） */
+  --amber: #bc7a34;
+  --amber-deep: #96601f;
+  --amber-glow: #e5a74f;
+  --film: rgba(188, 122, 52, 0.07);
+  --film-2: rgba(188, 122, 52, 0.16);
+  /* 信号 */
+  --echo: #d98e32;
+  --ok: #6d8f5a;
+  --danger: #b0523c;
+  /* 字体 */
+  --font-ui: 'PingFang SC', 'Microsoft YaHei', 'Noto Sans SC', system-ui, sans-serif;
+  --font-hand: 'Kaiti SC', 'STKaiti', 'KaiTi', 'TW-Kai-Plus', 'DFKai-SB', 'Songti SC', cursive;
+  /* 阴影与形 */
+  --shadow-sheet: 0 1px 2px rgba(46, 41, 33, 0.07), 0 10px 28px rgba(46, 41, 33, 0.1);
+  --shadow-lift: 0 2px 5px rgba(46, 41, 33, 0.1), 0 18px 44px rgba(46, 41, 33, 0.18);
+  --shadow-ticket: 0 1px 1px rgba(46, 41, 33, 0.06), 0 6px 18px rgba(46, 41, 33, 0.1);
+  --radius: 14px;
+  --rail-w: 84px;
+}
+
+[data-theme='dark'] {
+  --paper: #201b14;
+  --paper-sheet: #2b251b;
+  --paper-warm: #352d20;
+  --ink: #ece2cd;
+  --ink-2: #c6b998;
+  --ink-3: #8f8474;
+  --line: #473d2c;
+  --amber: #d99a4e;
+  --amber-deep: #b57a36;
+  --amber-glow: #f0b45c;
+  --film: rgba(217, 154, 78, 0.08);
+  --film-2: rgba(217, 154, 78, 0.18);
+  --echo: #e5a74f;
+  --shadow-sheet: 0 1px 2px rgba(0, 0, 0, 0.3), 0 10px 28px rgba(0, 0, 0, 0.35);
+  --shadow-lift: 0 2px 5px rgba(0, 0, 0, 0.35), 0 18px 44px rgba(0, 0, 0, 0.5);
+  --shadow-ticket: 0 1px 1px rgba(0, 0, 0, 0.3), 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+/* ============ 基础 ============ */
+* {
+  box-sizing: border-box;
+}
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  color: var(--ink);
+  background: var(--paper);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+button {
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+input,
+textarea,
+select {
+  font-family: inherit;
+  color: inherit;
+}
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 600;
+}
+p {
+  margin: 0;
+}
+::selection {
+  background: var(--film-2);
+}
+
+/* 底片质感：极淡的琥珀雾 + 细颗粒 */
+.app-bg {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(1200px 700px at 85% -10%, var(--film-2), transparent 60%),
+    radial-gradient(900px 600px at -10% 110%, var(--film), transparent 55%);
+}
+.app-bg::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image: radial-gradient(rgba(120, 96, 58, 0.05) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* ============ 通用控件 ============ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 14px;
+  color: var(--ink-2);
+  border: 1px solid var(--line);
+  background: var(--paper-sheet);
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+.btn:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-ticket);
+  border-color: var(--amber);
+  color: var(--ink);
+}
+.btn-primary {
+  background: var(--amber);
+  border-color: var(--amber);
+  color: #fff8ec;
+  font-weight: 600;
+}
+[data-theme='dark'] .btn-primary {
+  color: #241c10;
+}
+.btn-primary:hover {
+  background: var(--amber-deep);
+  color: #fff8ec;
+}
+.btn-ghost {
+  border-color: transparent;
+  background: transparent;
+}
+.btn-danger {
+  color: var(--danger);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+  transform: none;
+  box-shadow: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  color: var(--ink-2);
+  border: 1px dashed var(--line);
+  background: transparent;
+  transition: all 0.15s ease;
+}
+button.chip:hover {
+  border-color: var(--amber);
+  color: var(--ink);
+}
+.chip.active {
+  border-style: solid;
+  border-color: var(--amber);
+  color: var(--amber-deep);
+  background: var(--film);
+}
+[data-theme='dark'] .chip.active {
+  color: var(--amber-glow);
+}
+
+.input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--paper-sheet);
+  font-size: 14px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.input:focus {
+  border-color: var(--amber);
+  box-shadow: 0 0 0 3px var(--film);
+}
+textarea.input {
+  resize: vertical;
+  line-height: 1.8;
+}
+
+.section-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 15px;
+  color: var(--ink-2);
+  letter-spacing: 0.08em;
+  margin: 0 0 14px;
+}
+.section-title::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, var(--line), transparent);
+}
+
+.muted {
+  color: var(--ink-3);
+}
+.hand {
+  font-family: var(--font-hand);
+}
+
+/* 空状态：诚实而安静 */
+.empty-hint {
+  padding: 18px 20px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 1.8;
+  background: var(--film);
+}
+
+/* 弹层 */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(46, 41, 33, 0.32);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.modal-card {
+  width: min(420px, 100%);
+  background: var(--paper-sheet);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-lift);
+  padding: 22px;
+}
+.modal-card h3 {
+  font-size: 16px;
+  margin-bottom: 10px;
+}
+.modal-card p {
+  font-size: 14px;
+  color: var(--ink-2);
+  line-height: 1.8;
+  margin-bottom: 18px;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+/* 加载 */
+.loading-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-3);
+  font-size: 14px;
+  padding: 24px 4px;
+}
+.loading-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--amber-glow);
+  animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
