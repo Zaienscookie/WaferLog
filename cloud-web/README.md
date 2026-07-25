@@ -104,11 +104,11 @@ npm install
 npm run dev
 ```
 
-- 前端 <http://localhost:5173>（Vite 代理 `/api` → :3737）
+- 前端 <http://localhost:5173>（Vite 代理 `/api` → :2001）
 - 首次启动自动注入 12 页示例档案（覆盖 产品设计 / 低干扰 / 知识管理 等主题），开箱即演
 - 重新注入演示数据：`npm run seed -- --force`
 - API 冒烟测试（13 项）：先启动服务，再运行 `npm run smoke`
-- 生产模式：`npm run build && npm start`（后端直接托管前端构建产物，单端口 :3737）
+- 生产模式：Node API 监听 `:2001`，Nginx 在 `:3737` 托管 `web/dist` 并反代 `/api`。
 
 ## 演示脚本（约 3 分钟）
 
