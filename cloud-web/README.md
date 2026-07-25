@@ -108,7 +108,7 @@ npm run dev
 - 首次启动自动注入 12 页示例档案（覆盖 产品设计 / 低干扰 / 知识管理 等主题），开箱即演
 - 重新注入演示数据：`npm run seed -- --force`
 - API 冒烟测试（13 项）：先启动服务，再运行 `npm run smoke`
-- 生产模式：Node API 监听 `:2001`，Nginx 在 `:3737` 托管 `web/dist` 并反代 `/api`。
+- 生产模式：Node 服务在 `:3737` 同时提供 Web 和 API；设置 `COMPAT_PORT=80` 后，可兼容现有 T5AI-Board 的 `80` 端口上传请求。
 
 ## 演示脚本（约 3 分钟）
 

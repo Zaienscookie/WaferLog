@@ -111,6 +111,8 @@ typedef enum {
     TEXT_ENTER_PASSWORD,
     TEXT_WIFI_CONNECTED,
     TEXT_WIFI_DISCONNECTED,
+    TEXT_WIFI_CONNECTING,
+    TEXT_WIFI_CONNECT_FAILED,
     TEXT_BLUETOOTH_ENABLED,
     TEXT_BLUETOOTH_DISABLED,
     TEXT_DEVICE_CONNECTED,
@@ -170,7 +172,7 @@ static uint8_t * note_canvas_buffer;
 static size_t note_canvas_buffer_size;
 static lv_point_t previous_note_point;
 static uint32_t previous_note_tick;
-static bool wifi_radio_enabled;
+static bool wifi_radio_enabled = true;
 static bool network_bluetooth_tab;
 static lv_obj_t * network_overlay;
 static lv_obj_t * network_sheet;
@@ -178,12 +180,15 @@ static lv_obj_t * network_list;
 static lv_obj_t * network_status_label;
 static lv_obj_t * network_scan_button;
 static lv_obj_t * network_scan_label;
+static lv_timer_t * network_timer;
+static uint8_t network_scan_retry_ticks;
 static lv_obj_t * wifi_credentials_overlay;
 static lv_obj_t * wifi_ssid_input;
 static lv_obj_t * wifi_password_input;
 static lv_obj_t * wifi_password_toggle;
 static lv_obj_t * wifi_keyboard;
 static bool wifi_password_required;
+static bool wifi_connect_pending;
 static char wifi_pending_ssid[64];
 static void render_current_page(void);
 static void render_note_page(void);
@@ -205,6 +210,7 @@ static void wifi_credentials_close_cb(lv_event_t * event);
 static void wifi_credentials_input_cb(lv_event_t * event);
 static void wifi_password_toggle_cb(lv_event_t * event);
 static void wifi_credentials_join_cb(lv_event_t * event);
+static void network_poll_timer_cb(lv_timer_t * timer);
 static void rebuild_ui_timer_cb(lv_timer_t * timer);
 
 static lv_color_t color(uint32_t rgb)
@@ -261,6 +267,7 @@ static const char * tr(text_id_t id)
             "Display mode", "Color theme", "Light", "Dark", "Network", "Scan", "Scanning",
             "On", "Off", "Connect", "Disconnect", "Password", "Network name", "Join", "Cancel",
             "Enter network name", "Enter password", "Wi-Fi connected", "Wi-Fi disconnected",
+            "Connecting to Wi-Fi", "Wi-Fi connection failed",
             "Bluetooth enabled", "Bluetooth disabled", "Device connected", "Device disconnected",
             "No results", "Signal", "Secured", "Open"
         },
@@ -275,6 +282,7 @@ static const char * tr(text_id_t id)
             "显示模式", "主题颜色", "亮色", "暗色", "网络", "搜索", "搜索中",
             "已开启", "已关闭", "连接", "断开", "密码", "网络名称", "加入", "取消",
             "输入网络名称", "输入密码", "Wi-Fi 已连接", "Wi-Fi 已断开",
+            "正在连接 Wi-Fi", "Wi-Fi 连接失败",
             "蓝牙已开启", "蓝牙已关闭", "设备已连接", "设备已断开",
             "没有搜索结果", "信号", "已加密", "开放网络"
         },
@@ -289,6 +297,7 @@ static const char * tr(text_id_t id)
             "表示モード", "カラーテーマ", "ライト", "ダーク", "ネットワーク", "検索", "検索中",
             "オン", "オフ", "接続", "切断", "パスワード", "ネットワーク名", "参加", "キャンセル",
             "ネットワーク名を入力", "パスワードを入力", "Wi-Fi に接続しました", "Wi-Fi を切断しました",
+            "Wi-Fi に接続中", "Wi-Fi 接続に失敗しました",
             "Bluetooth を有効化しました", "Bluetooth を無効化しました", "デバイスに接続しました", "デバイスを切断しました",
             "結果がありません", "信号", "保護あり", "オープン"
         },
@@ -303,6 +312,7 @@ static const char * tr(text_id_t id)
             "Mode d'affichage", "Thème de couleur", "Clair", "Sombre", "Réseau", "Rechercher", "Recherche",
             "Activé", "Désactivé", "Connecter", "Déconnecter", "Mot de passe", "Nom du réseau", "Rejoindre", "Annuler",
             "Saisir le nom du réseau", "Saisir le mot de passe", "Wi-Fi connecté", "Wi-Fi déconnecté",
+            "Connexion au Wi-Fi", "Échec de la connexion Wi-Fi",
             "Bluetooth activé", "Bluetooth désactivé", "Appareil connecté", "Appareil déconnecté",
             "Aucun résultat", "Signal", "Sécurisé", "Ouvert"
         },
@@ -317,6 +327,7 @@ static const char * tr(text_id_t id)
             "Режим отображения", "Цветовая тема", "Светлая", "Тёмная", "Сеть", "Поиск", "Поиск",
             "Включено", "Выключено", "Подключить", "Отключить", "Пароль", "Имя сети", "Войти", "Отмена",
             "Введите имя сети", "Введите пароль", "Wi-Fi подключён", "Wi-Fi отключён",
+            "Подключение к Wi-Fi", "Не удалось подключиться к Wi-Fi",
             "Bluetooth включён", "Bluetooth выключен", "Устройство подключено", "Устройство отключено",
             "Нет результатов", "Сигнал", "Защищено", "Открытая сеть"
         }
@@ -583,6 +594,11 @@ static void network_close_cb(lv_event_t * event)
         network_scan_button = NULL;
         network_scan_label = NULL;
     }
+    network_scan_retry_ticks = 0U;
+    if(network_timer != NULL) {
+        lv_timer_delete(network_timer);
+        network_timer = NULL;
+    }
 }
 
 static void network_tab_cb(lv_event_t * event)
@@ -612,6 +628,7 @@ static void network_toggle_cb(lv_event_t * event)
             waferlog_wifi_scan();
         }
         else {
+            wifi_connect_pending = false;
             waferlog_wifi_disconnect();
             show_toast(tr(TEXT_WIFI_DISCONNECTED));
         }
@@ -630,9 +647,9 @@ static void network_scan_cb(lv_event_t * event)
         waferlog_ble_scan();
     }
     else {
-        if(wifi_radio_enabled) {
-            waferlog_wifi_scan();
-        }
+        wifi_radio_enabled = true;
+        network_scan_retry_ticks = 0U;
+        waferlog_wifi_scan();
     }
     refresh_network_overlay();
 }
@@ -664,10 +681,14 @@ static void network_row_cb(lv_event_t * event)
         show_wifi_credentials(ssid, true);
         return;
     }
+    wifi_connect_pending = true;
     if(waferlog_wifi_connect(ssid, "")) {
-        show_toast(tr(TEXT_WIFI_CONNECTED));
-        network_close_cb(NULL);
-        render_home_page();
+        show_toast(tr(TEXT_WIFI_CONNECTING));
+        refresh_network_overlay();
+    }
+    else {
+        wifi_connect_pending = false;
+        show_toast(tr(TEXT_WIFI_CONNECT_FAILED));
     }
 }
 
@@ -727,14 +748,15 @@ static void wifi_credentials_join_cb(lv_event_t * event)
         show_toast(tr(TEXT_ENTER_PASSWORD));
         return;
     }
+    wifi_connect_pending = true;
     if(!waferlog_wifi_connect(ssid, password != NULL ? password : "")) {
-        show_toast(tr(TEXT_CONNECT_WIFI_FIRST));
+        wifi_connect_pending = false;
+        show_toast(tr(TEXT_WIFI_CONNECT_FAILED));
         return;
     }
-    show_toast(tr(TEXT_WIFI_CONNECTED));
+    show_toast(tr(TEXT_WIFI_CONNECTING));
     wifi_credentials_close_cb(NULL);
-    network_close_cb(NULL);
-    render_home_page();
+    refresh_network_overlay();
 }
 
 static void refresh_network_overlay(void)
@@ -752,7 +774,11 @@ static void refresh_network_overlay(void)
         );
     }
     if(network_scan_label != NULL) {
-        lv_label_set_text(network_scan_label, tr(TEXT_SCAN));
+        lv_label_set_text(
+            network_scan_label,
+            !network_bluetooth_tab && waferlog_wifi_scan_in_progress()
+                ? tr(TEXT_SCANNING) : tr(TEXT_SCAN)
+        );
     }
 
     uint32_t count = network_bluetooth_tab
@@ -760,7 +786,11 @@ static void refresh_network_overlay(void)
         : waferlog_wifi_scan_count();
     if(count == 0U) {
         lv_obj_t * empty = lv_label_create(network_list);
-        lv_label_set_text(empty, tr(TEXT_NO_RESULTS));
+        lv_label_set_text(
+            empty,
+            !network_bluetooth_tab && waferlog_wifi_scan_in_progress()
+                ? tr(TEXT_SCANNING) : tr(TEXT_NO_RESULTS)
+        );
         lv_obj_set_pos(empty, 8, 8);
         text_style(empty, &lv_font_montserrat_14, theme_muted());
         return;
@@ -821,9 +851,9 @@ static void show_network_overlay(bool bluetooth_tab)
         waferlog_ble_scan();
     }
     else {
-        if(wifi_radio_enabled) {
-            waferlog_wifi_scan();
-        }
+        wifi_radio_enabled = true;
+        network_scan_retry_ticks = 0U;
+        waferlog_wifi_scan();
     }
 
     int32_t sheet_height = is_landscape ? 286 : 430;
@@ -895,6 +925,43 @@ static void show_network_overlay(bool bluetooth_tab)
         sheet_width - 24, sheet_height - (network_bluetooth_tab ? 144 : 180),
         theme_bg(), 10
     );
+    refresh_network_overlay();
+    network_timer = lv_timer_create(network_poll_timer_cb, 250, NULL);
+}
+
+static void network_poll_timer_cb(lv_timer_t * timer)
+{
+    (void)timer;
+    if(network_overlay == NULL) {
+        return;
+    }
+    bool connected = waferlog_wifi_is_connected();
+    bool failed = waferlog_wifi_connection_failed();
+    if(wifi_connect_pending && connected) {
+        wifi_connect_pending = false;
+        show_toast(tr(TEXT_WIFI_CONNECTED));
+        network_close_cb(NULL);
+        render_home_page();
+        return;
+    }
+    if(wifi_connect_pending && failed && !waferlog_wifi_is_connecting()) {
+        wifi_connect_pending = false;
+        show_toast(tr(TEXT_WIFI_CONNECT_FAILED));
+    }
+    if(!network_bluetooth_tab && wifi_radio_enabled) {
+        if(waferlog_wifi_scan_count() > 0U) {
+            network_scan_retry_ticks = 0U;
+        }
+        else if(!waferlog_wifi_scan_in_progress()) {
+            if(network_scan_retry_ticks < 16U) {
+                network_scan_retry_ticks++;
+            }
+            else {
+                network_scan_retry_ticks = 0U;
+                waferlog_wifi_scan();
+            }
+        }
+    }
     refresh_network_overlay();
 }
 
@@ -2146,11 +2213,14 @@ static void rebuild_ui_timer_cb(lv_timer_t * timer)
     network_status_label = NULL;
     network_scan_button = NULL;
     network_scan_label = NULL;
+    network_timer = NULL;
+    network_scan_retry_ticks = 0U;
     wifi_credentials_overlay = NULL;
     wifi_ssid_input = NULL;
     wifi_password_input = NULL;
     wifi_password_toggle = NULL;
     wifi_keyboard = NULL;
+    wifi_connect_pending = false;
     for(uint32_t i = 0; i < 3; i++) {
         nav_buttons[i] = NULL;
     }

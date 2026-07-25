@@ -17,16 +17,25 @@ void waferlog_tuya_lvgl_lock(void);
 void waferlog_tuya_lvgl_unlock(void);
 
 #ifdef WAFERLOG_HAS_LOCAL_CONFIG
-static void waferlog_cloud_probe(void * arg)
+static void waferlog_wifi_probe(void * arg)
 {
     (void)arg;
-    for(uint32_t attempt = 0U; attempt < 3U; attempt++) {
+    waferlog_wifi_scan();
+    for(uint32_t wait = 0U; wait < 50U; wait++) {
+        if(!waferlog_wifi_scan_in_progress()) {
+            break;
+        }
+        tal_system_sleep(200U);
+    }
+    for(uint32_t attempt = 0U; attempt < 10U; attempt++) {
         if(waferlog_wifi_connect(WAFERLOG_WIFI_SSID, WAFERLOG_WIFI_PASSWORD)) {
-            PR_INFO("WaferLog Wi-Fi connect requested");
-            for(uint32_t wait = 0U; wait < 30U; wait++) {
+            PR_INFO("WaferLog Wi-Fi connect requested ssid=%s", WAFERLOG_WIFI_SSID);
+            for(uint32_t wait = 0U; wait < 40U; wait++) {
                 if(waferlog_wifi_is_connected()) {
-                    PR_INFO("WaferLog Wi-Fi got IP; probing cloud server");
-                    PR_INFO("WaferLog cloud sync result=%s",
+                    PR_INFO("WaferLog Wi-Fi got IP");
+                    waferlog_wifi_scan();
+                    tal_system_sleep(1000U);
+                    PR_INFO("WaferLog server connectivity result=%s",
                             waferlog_device_sync() ? "ok" : "failed");
                     return;
                 }
@@ -37,7 +46,7 @@ static void waferlog_cloud_probe(void * arg)
                 (unsigned)(attempt + 1U));
         tal_system_sleep(2000U);
     }
-    PR_ERR("WaferLog Wi-Fi cloud probe failed");
+    PR_ERR("WaferLog Wi-Fi connection failed");
 }
 #endif
 
@@ -66,7 +75,7 @@ static void waferlog_start(void * arg)
         .psram_mode = 1,
     };
     tal_thread_create_and_start(
-        &cloud_thread, NULL, NULL, waferlog_cloud_probe, NULL, &cloud_cfg
+        &cloud_thread, NULL, NULL, waferlog_wifi_probe, NULL, &cloud_cfg
     );
 #endif
 

@@ -26,8 +26,11 @@
 static bool recording_active;
 static bool recording_ready;
 static bool wifi_connected;
+static bool wifi_connecting;
+static bool wifi_connection_failed;
 static bool ble_enabled;
 static bool wifi_scan_ready;
+static bool wifi_scan_running;
 static bool ble_scan_ready;
 static uint8_t * recording_buffer;
 static uint32_t recording_buffer_size;
@@ -58,13 +61,17 @@ typedef struct {
 static TDL_AUDIO_HANDLE_T audio_handle;
 static TDL_AUDIO_INFO_T audio_info;
 static MUTEX_HANDLE recording_mutex;
+static MUTEX_HANDLE wifi_scan_mutex;
 static MUTEX_HANDLE ble_scan_mutex;
 static bool wifi_stack_ready;
 static bool ble_stack_ready;
+static THREAD_HANDLE wifi_scan_thread;
 static waferlog_wifi_result_t wifi_scan_results[WAFERLOG_SCAN_RESULT_MAX];
 static uint32_t wifi_scan_result_count;
 static waferlog_ble_result_t ble_scan_results[WAFERLOG_SCAN_RESULT_MAX];
 static uint32_t ble_scan_result_count;
+static char wifi_connect_ssid[WIFI_SSID_LEN + 1U];
+static char wifi_connect_password[WIFI_PASSWD_LEN + 1U];
 
 static int32_t waferlog_rssi_percent(int32_t rssi)
 {
@@ -75,11 +82,64 @@ static int32_t waferlog_rssi_percent(int32_t rssi)
 static void waferlog_wifi_event_cb(WF_EVENT_E event, void * arg)
 {
     (void)arg;
-    if(event == WFE_CONNECT_FAILED || event == WFE_DISCONNECTED) {
+    if(event == WFE_CONNECT_FAILED) {
         wifi_connected = false;
+        wifi_connecting = false;
+        wifi_connection_failed = true;
+    }
+    else if(event == WFE_DISCONNECTED) {
+        wifi_connected = false;
+        if(!wifi_connecting) {
+            wifi_connection_failed = false;
+        }
     }
     else if(event == WFE_CONNECTED) {
         wifi_connected = false;
+        wifi_connecting = true;
+        wifi_connection_failed = false;
+    }
+}
+
+static void waferlog_wifi_scan_task(void * arg)
+{
+    (void)arg;
+    AP_IF_S * access_points = NULL;
+    uint32_t count = 0U;
+    bool success = tal_wifi_all_ap_scan(&access_points, &count) == OPRT_OK;
+
+    if(wifi_scan_mutex != NULL && tal_mutex_lock(wifi_scan_mutex) == OPRT_OK) {
+        wifi_scan_result_count = 0U;
+        if(success && access_points != NULL) {
+            wifi_scan_result_count = count > WAFERLOG_SCAN_RESULT_MAX
+                ? WAFERLOG_SCAN_RESULT_MAX
+                : count;
+            for(uint32_t i = 0U; i < wifi_scan_result_count; i++) {
+                uint32_t ssid_len = access_points[i].s_len;
+                if(ssid_len > WIFI_SSID_LEN) {
+                    ssid_len = WIFI_SSID_LEN;
+                }
+                memcpy(wifi_scan_results[i].ssid, access_points[i].ssid, ssid_len);
+                wifi_scan_results[i].ssid[ssid_len] = '\0';
+                wifi_scan_results[i].signal = waferlog_rssi_percent(access_points[i].rssi);
+                wifi_scan_results[i].secured = access_points[i].security != WAAM_OPEN;
+            }
+        }
+        wifi_scan_ready = success;
+        wifi_scan_running = false;
+        PR_INFO("WaferLog Wi-Fi scan complete count=%u result=%s",
+                (unsigned)wifi_scan_result_count,
+                success ? "ok" : "failed");
+        for(uint32_t i = 0U; i < wifi_scan_result_count; i++) {
+            PR_INFO("WaferLog Wi-Fi network[%u] ssid=%s signal=%d%% secured=%d",
+                    (unsigned)i,
+                    wifi_scan_results[i].ssid,
+                    (int)wifi_scan_results[i].signal,
+                    wifi_scan_results[i].secured ? 1 : 0);
+        }
+        tal_mutex_unlock(wifi_scan_mutex);
+    }
+    if(access_points != NULL) {
+        tal_wifi_release_ap(access_points);
     }
 }
 
@@ -246,8 +306,11 @@ void waferlog_services_init(void)
     recording_active = false;
     recording_ready = false;
     wifi_connected = false;
+    wifi_connecting = false;
+    wifi_connection_failed = false;
     ble_enabled = false;
     wifi_scan_ready = false;
+    wifi_scan_running = false;
     ble_scan_ready = false;
     recording_data_size = 0U;
     note_upload_ready = false;
@@ -256,6 +319,9 @@ void waferlog_services_init(void)
     device_task_count = 0U;
 #ifdef WAFERLOG_T5AI
     wifi_stack_ready = tal_wifi_init(waferlog_wifi_event_cb) == OPRT_OK;
+    if(wifi_scan_mutex == NULL) {
+        tal_mutex_create_init(&wifi_scan_mutex);
+    }
     if(ble_scan_mutex == NULL) {
         tal_mutex_create_init(&ble_scan_mutex);
     }
@@ -371,15 +437,32 @@ bool waferlog_wifi_connect(const char * ssid, const char * password)
     if(!wifi_stack_ready || ssid == NULL || password == NULL || ssid[0] == '\0') {
         return false;
     }
-    if(tal_wifi_station_connect((int8_t *)ssid, (int8_t *)password) != OPRT_OK) {
-        wifi_connected = false;
+    size_t ssid_len = strlen(ssid);
+    size_t password_len = strlen(password);
+    if(ssid_len > WIFI_SSID_LEN || password_len > WIFI_PASSWD_LEN) {
         return false;
     }
+    memcpy(wifi_connect_ssid, ssid, ssid_len + 1U);
+    memcpy(wifi_connect_password, password, password_len + 1U);
+    tal_wifi_station_disconnect();
     wifi_connected = false;
+    wifi_connecting = true;
+    wifi_connection_failed = false;
+    if(tal_wifi_station_connect(
+        (int8_t *)wifi_connect_ssid,
+        (int8_t *)wifi_connect_password
+    ) != OPRT_OK) {
+        wifi_connected = false;
+        wifi_connecting = false;
+        wifi_connection_failed = true;
+        return false;
+    }
     return true;
 #else
     wifi_connected = ssid != NULL && password != NULL &&
                      strlen(ssid) > 0;
+    wifi_connecting = false;
+    wifi_connection_failed = !wifi_connected;
     return wifi_connected;
 #endif
 }
@@ -392,6 +475,8 @@ void waferlog_wifi_disconnect(void)
     }
 #endif
     wifi_connected = false;
+    wifi_connecting = false;
+    wifi_connection_failed = false;
 }
 
 bool waferlog_wifi_is_connected(void)
@@ -400,36 +485,68 @@ bool waferlog_wifi_is_connected(void)
     WF_STATION_STAT_E status;
     if(wifi_stack_ready && tal_wifi_station_get_status(&status) == OPRT_OK) {
         wifi_connected = status == WSS_GOT_IP;
+        wifi_connecting = status == WSS_CONNECTING || status == WSS_CONN_SUCCESS;
+        if(status == WSS_GOT_IP) {
+            wifi_connecting = false;
+            wifi_connection_failed = false;
+        }
+        else if(status == WSS_PASSWD_WRONG || status == WSS_NO_AP_FOUND ||
+                status == WSS_CONN_FAIL || status == WSS_DHCP_FAIL) {
+            wifi_connecting = false;
+            wifi_connection_failed = true;
+        }
     }
 #endif
     return wifi_connected;
 }
 
+bool waferlog_wifi_is_connecting(void)
+{
+#ifdef WAFERLOG_T5AI
+    waferlog_wifi_is_connected();
+#endif
+    return wifi_connecting;
+}
+
+bool waferlog_wifi_connection_failed(void)
+{
+#ifdef WAFERLOG_T5AI
+    waferlog_wifi_is_connected();
+#endif
+    return wifi_connection_failed;
+}
+
 bool waferlog_wifi_scan(void)
 {
 #ifdef WAFERLOG_T5AI
-    AP_IF_S * access_points = NULL;
-    uint32_t count = 0U;
-    if(tal_wifi_all_ap_scan(&access_points, &count) != OPRT_OK) {
-        wifi_scan_result_count = 0U;
-        wifi_scan_ready = false;
+    if(!wifi_stack_ready || wifi_scan_mutex == NULL) {
         return false;
     }
-    wifi_scan_result_count = count > WAFERLOG_SCAN_RESULT_MAX
-        ? WAFERLOG_SCAN_RESULT_MAX
-        : count;
-    for(uint32_t i = 0U; i < wifi_scan_result_count; i++) {
-        uint32_t ssid_len = access_points[i].s_len;
-        if(ssid_len > WIFI_SSID_LEN) {
-            ssid_len = WIFI_SSID_LEN;
-        }
-        memcpy(wifi_scan_results[i].ssid, access_points[i].ssid, ssid_len);
-        wifi_scan_results[i].ssid[ssid_len] = '\0';
-        wifi_scan_results[i].signal = waferlog_rssi_percent(access_points[i].rssi);
-        wifi_scan_results[i].secured = access_points[i].security != WAAM_OPEN;
+    if(tal_mutex_lock(wifi_scan_mutex) != OPRT_OK) {
+        return false;
     }
-    tal_wifi_release_ap(access_points);
-    wifi_scan_ready = true;
+    if(wifi_scan_running) {
+        tal_mutex_unlock(wifi_scan_mutex);
+        return true;
+    }
+    wifi_scan_running = true;
+    wifi_scan_ready = false;
+    tal_mutex_unlock(wifi_scan_mutex);
+    THREAD_CFG_T scan_cfg = {
+        .stackDepth = 4096,
+        .priority = THREAD_PRIO_3,
+        .thrdname = "waferlog_wifi_scan",
+        .psram_mode = 1,
+    };
+    if(tal_thread_create_and_start(
+        &wifi_scan_thread, NULL, NULL, waferlog_wifi_scan_task, NULL, &scan_cfg
+    ) != OPRT_OK) {
+        if(tal_mutex_lock(wifi_scan_mutex) == OPRT_OK) {
+            wifi_scan_running = false;
+            tal_mutex_unlock(wifi_scan_mutex);
+        }
+        return false;
+    }
     return true;
 #else
     wifi_scan_ready = true;
@@ -437,10 +554,29 @@ bool waferlog_wifi_scan(void)
 #endif
 }
 
+bool waferlog_wifi_scan_in_progress(void)
+{
+#ifdef WAFERLOG_T5AI
+    bool in_progress = false;
+    if(wifi_scan_mutex != NULL && tal_mutex_lock(wifi_scan_mutex) == OPRT_OK) {
+        in_progress = wifi_scan_running;
+        tal_mutex_unlock(wifi_scan_mutex);
+    }
+    return in_progress;
+#else
+    return false;
+#endif
+}
+
 uint32_t waferlog_wifi_scan_count(void)
 {
 #ifdef WAFERLOG_T5AI
-    return wifi_scan_ready ? wifi_scan_result_count : 0U;
+    uint32_t count = 0U;
+    if(wifi_scan_mutex != NULL && tal_mutex_lock(wifi_scan_mutex) == OPRT_OK) {
+        count = wifi_scan_ready ? wifi_scan_result_count : 0U;
+        tal_mutex_unlock(wifi_scan_mutex);
+    }
+    return count;
 #else
     return wifi_scan_ready ? (uint32_t)(sizeof(wifi_networks) / sizeof(wifi_networks[0])) : 0U;
 #endif
@@ -448,7 +584,7 @@ uint32_t waferlog_wifi_scan_count(void)
 
 const char * waferlog_wifi_scan_ssid(uint32_t index)
 {
-    if(!wifi_scan_ready || index >= waferlog_wifi_scan_count()) {
+    if(index >= waferlog_wifi_scan_count()) {
         return NULL;
     }
 #ifdef WAFERLOG_T5AI
@@ -460,7 +596,7 @@ const char * waferlog_wifi_scan_ssid(uint32_t index)
 
 int32_t waferlog_wifi_scan_signal(uint32_t index)
 {
-    if(!wifi_scan_ready || index >= waferlog_wifi_scan_count()) {
+    if(index >= waferlog_wifi_scan_count()) {
         return 0;
     }
 #ifdef WAFERLOG_T5AI
@@ -472,7 +608,7 @@ int32_t waferlog_wifi_scan_signal(uint32_t index)
 
 bool waferlog_wifi_scan_secured(uint32_t index)
 {
-    if(!wifi_scan_ready || index >= waferlog_wifi_scan_count()) {
+    if(index >= waferlog_wifi_scan_count()) {
         return false;
     }
 #ifdef WAFERLOG_T5AI

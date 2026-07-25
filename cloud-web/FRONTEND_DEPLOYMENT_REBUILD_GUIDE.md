@@ -36,7 +36,7 @@ agent 不得删除或改名现有 T5AI-Board 设备接口，不得把 API Key �
 - 服务端：Node.js、Express。
 - 数据：SQLite。
 - 本地开发端口：前端 `5173`，服务端 `2001`。
-- 生产模式：Node.js 服务端监听 `2001`，Nginx 在 `3737` 托管 `web/dist` 并反代 `/api`。
+- 生产模式：Node.js 在 `3737` 同时提供 Web 和 API；设置 `COMPAT_PORT=80` 后，额外兼容现有 T5AI-Board 的 `80` 端口上传请求。
 
 当前主要路由：
 
@@ -392,12 +392,12 @@ npm run build
 cloud-web/web/dist
 ```
 
-生产环境由 Nginx 托管该目录，Node.js 服务端只提供 `/api` 接口。
+生产环境由 Node.js 直接托管该目录，并同时提供 `/api` 接口。
 
 启动服务：
 
 ```bash
-PORT=2001 WAFERLOG_SETTINGS_SECRET='服务端随机密钥' npm start
+PORT=3737 COMPAT_PORT=80 WAFERLOG_SETTINGS_SECRET='服务端随机密钥' npm start
 ```
 
 ## 16. systemd 示例
@@ -413,7 +413,8 @@ After=network.target
 Type=simple
 WorkingDirectory=/opt/waferlog/cloud-web
 Environment=NODE_ENV=production
-Environment=PORT=2001
+Environment=PORT=3737
+Environment=COMPAT_PORT=80
 EnvironmentFile=/etc/waferlog/waferlog.env
 ExecStart=/usr/bin/npm start
 Restart=always
@@ -439,7 +440,9 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now waferlog
 ```
 
-## 17. Nginx 示例
+## 17. 端口与反向代理
+
+直接部署时，Node.js 服务使用 `3737` 提供 Web/API，并使用 `80` 作为板端兼容入口。若前面已有 Nginx，可只代理 Web/API 端口，板端兼容入口仍需保留到 `80`：
 
 ```nginx
 server {
@@ -450,7 +453,7 @@ server {
     root /opt/waferlog/cloud-web/web/dist;
 
     location /api/ {
-        proxy_pass http://127.0.0.1:2001;
+        proxy_pass http://127.0.0.1:3737;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;

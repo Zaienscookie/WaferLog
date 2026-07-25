@@ -30,7 +30,10 @@ bool waferlog_recording_read(
 bool waferlog_wifi_connect(const char * ssid, const char * password);
 void waferlog_wifi_disconnect(void);
 bool waferlog_wifi_is_connected(void);
+bool waferlog_wifi_is_connecting(void);
+bool waferlog_wifi_connection_failed(void);
 bool waferlog_wifi_scan(void);
+bool waferlog_wifi_scan_in_progress(void);
 uint32_t waferlog_wifi_scan_count(void);
 const char * waferlog_wifi_scan_ssid(uint32_t index);
 int32_t waferlog_wifi_scan_signal(uint32_t index);
